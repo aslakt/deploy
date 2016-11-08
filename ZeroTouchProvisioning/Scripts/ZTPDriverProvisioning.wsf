@@ -1,0 +1,1209 @@
+<job id="ZTIDriverProvisioning">
+   <script language="VBScript" src="ZTIUtility.vbs"/>
+   <script language="VBScript" src="ZTPDiskPart.vbs"/>
+   <script language="VBScript">
+   
+' // ***************************************************************************
+' // 
+' // EVRY - Aslak Tangen - 06.10.2016
+' //
+' // File:      ZTIDriverProvisioning.wsf
+' // 
+' // Version:   2.0
+' // 
+' // Purpose:	This script exports third party drivers from an existing
+' //            Windows 10 installation to a separate partition.
+' //            This will then be available for future deployments.
+' // 
+' // Usage:     cscript.exe %SCRIPTROOT%\ZTPDiskPart.wsf /Action:INJECT|PROVISION
+' //
+' // Terms of use:
+' //            This script is provided "AS IS" with no warranties,
+' //            confers no rights and is not supported by the authors
+' //            by the authors or Deployment Artist. 
+' // 
+' // ***************************************************************************
+Option Explicit
+RunNewInstance
+
+Class ZTIDriverProvisioning
+    
+    Private sDFSDriversPath
+    Private sUSBDriversPath
+    Private sLMDriversPath
+    Private bStoreToUSB
+    Private sUSBDriveLetter
+    Private sOSDiskLetter
+
+    Function Main
+
+        Dim objVolumes, objVolume
+        Dim sOSDisk, sMessage, sRetVal
+        Dim iRetVal, iTempVolIndex, iOSVolIndex, iLMDriversVolIndex
+        Dim bUseUSB
+
+	    If oFSO.FolderExists(oEnvironment.Item("OSDISK")) Then
+		    sOSDisk = oEnvironment.Item("OSDISK")
+	    Else
+		    sOSDisk = oEnvironment.Item("SMSTSLocalDataDrive")
+	    End if
+        
+        sOSDiskLetter = Left(sOSDisk, 1)
+        
+        If oEnvironment.Exists("Action") Then
+        
+            Select Case UCase(oEnvironment.Item("Action"))
+
+                Case UCase("INJECT")
+
+                    If oEnvironment.Exists("DriverExportPath") Then
+                        If NOT oFSO.FolderExists(oEnvironment.Item("DriverExportPath")) Then
+                            Set objVolumes = ListVolume
+                            Select Case oEnvironment.Item("DriverExportSourceType")
+                                Case "DFSDrivers"
+                                    If IsDFSDrivers Then
+                                        oEnvironment.Item("DriverExportPath") = sDFSDriversPath
+                                    Else
+                                        iRetVal = MsgBox("Unfortunately the deployment has failed to manage drivers in the intended manner." & VbCrLf &_
+                                                         "You may salvage it by connecting a removable device that contains a driver package for this computer model: " & VbCrLf &_
+                                                         VbTab & oEnvironment.Item("model") & VbCrLf &_
+                                                         "Connect such a device and click 'OK' to continue deployment." & VbCrLf &_
+                                                         "To abort the deployment process click 'Cancel'.", 4113, "Driver package missing")
+                                        If iRetVal <> 1 Then
+                                            WScript.Quit 1
+                                        End if
+                                        While (NOT IsUSBDrivers)
+                                            If IsUSBConnected Then
+                                                sMessage = "No suitable drivers found on the connected device."
+                                            Else
+                                                sMessage = "No device connected."
+                                            End if
+                                            iRetVal = MsgBox(sMessage & VbCrLf & VbCrLf & "Please connect the device, then click OK" & VbCrLf &_
+                                                             "To abort the deployment process click 'Cancel'.", 4113, "Driver package missing")
+                                            If iRetVal <> 1 Then
+                                                WScript.Quit 1
+                                            End if
+                                        Wend
+                                        oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                                    End if
+                                Case "Removable"
+                                    While (NOT IsUSBDrivers)
+                                        MsgBox  sMessage & "The removable device previously selected to inject drivers from seems to have been disconnected." & VbCrLf &_
+                                                "Please connect the device, then click OK", 4145, "Driver source disconnected"
+                                        If IsUSBConnected Then
+                                            sMessage = "No suitable drivers found on the connected device." & VbCrLf & VbCrLf
+                                        End if
+                                    Wend
+                                    oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                                Case "LMDrivers"
+                                    If IsLMDrivers Then
+                                        oEnvironment.Item("DriverExportPath") = sLMDriversPath
+                                    Else
+                                        iRetVal = MsgBox("Unfortunately the deployment has failed to manage drivers in the intended manner." & VbCrLf &_
+                                                         "You may salvage it by connecting a removable device that contains a driver package for this computer model: " & VbCrLf &_
+                                                         VbTab & oEnvironment.Item("model") & VbCrLf &_
+                                                         "Connect such a device and click 'OK' to continue deployment." & VbCrLf &_
+                                                         "To abort the deployment process click 'Cancel'.", 4113, "Driver package missing")
+                                        If iRetVal <> 1 Then
+                                            WScript.Quit 1
+                                        End if
+                                        While (NOT IsUSBDrivers)
+                                            If IsUSBConnected Then
+                                                sMessage = "No suitable drivers found on the connected device."
+                                            Else
+                                                sMessage = "No device connected."
+                                            End if
+                                            iRetVal = MsgBox(sMessage & VbCrLf & VbCrLf & "Please connect the device, then click OK" & VbCrLf &_
+                                                             "To abort the deployment process click 'Cancel'.", 4113, "Driver package missing")
+                                            If iRetVal <> 1 Then
+                                                WScript.Quit 1
+                                            End if
+                                        Wend
+                                        oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                                    End if
+                                Case "Temp"
+                                    If IsTempDrivers Then
+                                        oEnvironment.Item("DriverExportPath") = sLMDriversPath
+                                    Else
+                                        iRetVal = MsgBox("Unfortunately the deployment has failed to manage drivers in the intended manner." & VbCrLf &_
+                                                         "You may salvage it by connecting a removable device that contains a driver package for this computer model: " & VbCrLf &_
+                                                         VbTab & oEnvironment.Item("model") & VbCrLf &_
+                                                         "Connect such a device and click 'OK' to continue deployment." & VbCrLf &_
+                                                         "To abort the deployment process click 'Cancel'.", 4113, "Driver package missing")
+                                        If iRetVal <> 1 Then
+                                            WScript.Quit 1
+                                        End if
+                                        While (NOT IsUSBDrivers)
+                                            If IsUSBConnected Then
+                                                sMessage = "No suitable drivers found on the connected device."
+                                            Else
+                                                sMessage = "No device connected."
+                                            End if
+                                            iRetVal = MsgBox(sMessage & VbCrLf & VbCrLf & "Please connect the device, then click OK" & VbCrLf &_
+                                                             "To abort the deployment process click 'Cancel'.", 4113, "Driver package missing")
+                                            If iRetVal <> 1 Then
+                                                WScript.Quit 1
+                                            End if
+                                        Wend
+                                        oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                                    End if
+                            End Select
+                        End if
+                        oLogging.CreateEntry "Injecting drivers from: " & oEnvironment.Item("DriverExportPath") & " to " & sOSDisk & "\", LogTypeInfo
+                        iRetVal = oShell.Run("DISM /Image:" & sOSDisk & "\ /Add-Driver /Driver:" & Chr(34) & oEnvironment.Item("DriverExportPath") & Chr(34) & " /Recurse", 0, True)
+                        If iRetVal = 0 Then
+                            oLogging.CreateEntry "Successfully injected drivers from " & oEnvironment.Item("DriverExportPath") & " to " & sOSDisk, LogTypeInfo
+                        ElseIf iRetVal = 2 Then
+                            oLogging.CreateEntry "Warning: Injected drivers with error(s). See DISM log for details.", LogTypeWarning
+                        Else
+                            oLogging.CreateEntry "An error occured while injecting drivers. Error code: " & iRetVal, LogTypeError
+                            WScript.Quit iRetVal
+                        End if
+                        
+                        Set objVolumes = ListVolume
+                        For Each objVolume in objVolumes.Items
+                            If objVolume.Label = "Temp" Then
+                                iTempVolIndex = objVolume.Index
+                            ElseIf objVolume.Letter = sOSDisk Then
+                                iOSVolIndex = objVolume.Index
+                            ElseIf objVolume.Label = "LMDrivers" Then
+                                iLMDriversVolIndex = objVolume.Index
+                            End if
+                        Next
+                        If iTempVolIndex <> "" Then
+                            If SelectVolume(iTempVolIndex) Then
+                                If DeletePartition Then
+                                    If SelectVolume(iOSVolIndex) Then
+                                        If Extend Then
+                                            oLogging.CreateEntry "Successfully cleaned up temporary driver export partition.", LogTypeInfo
+                                        Else
+                                            oLogging.CreateEntry "Failed to extend the Windows volume", LogTypeWarning
+                                        End if
+                                    Else
+                                        oLogging.CreateEntry "Failed to select the Windows volume", LogTypeWarning
+                                    End if
+                                Else
+                                    oLogging.CreateEntry "Failed to delete the temporary partition.", LogTypeWarning
+                                End if
+                            Else
+                                oLogging.CreateEntry "Failed to select the temporary volume.", LogTypeWarning
+                            End if
+                        ElseIf iLMDriversVolIndex <> "" Then
+                            If SelectVolume(iLMDriversVolIndex) Then
+                                If HideVolume Then
+                                    oLogging.CreateEntry "Successfully hid the LMDrivers volume.", LogTypeInfo                                    
+                                Else
+                                    oLogging.CreateEntry "Failed to hide the LMDrivers volume.", LogTypeWarning
+                                End if
+                            Else
+                                oLogging.CreateEntry "Failed to select the LMDrivers volume.", LogTypeWarning
+                            End if
+                        End if
+                    Else
+                        oLogging.CreateEntry "The Task Sequence Variable DriverExportPath is not defined. Unable to proceed. Deployment Stopped", LogTypeError
+                        WScript.Quit 1
+                    End if
+                               
+                
+                Case UCase("PROVISION")
+                
+                    ' // ***************************************************************************
+                    ' // Repair DISM module for PowerShell
+                    ' // ***************************************************************************
+
+                    If RepairDISMforPowerShell Then
+                        oLogging.CreateEntry "Successfully repaired DISM for PowerShell", LogTypeInfo
+                    Else
+                        oLogging.CreateEntry "Unable to repair DISM for PowerShell - Deployment stopped", LogTypeError
+                        WScript.Quit 1
+                    End if
+                
+                    If InStr(oEnvironment.Item("ExistingProductName"), "Windows 10") > 0 Then
+                        If IsUSBConnected Then
+                            If IsUSBDrivers Then
+                                bStoreToUSB = False
+                                iRetVal = MsgBox("A connected device with a driver package for this computer model was detected." & VbCrLf &_
+                                                 "Do you wish to use these drivers insted of using the drivers from the currently installed OS?",_
+                                                 4164, "Optional driver package detected")
+                                If iRetVal = 6 Then
+                                    oLogging.CreateEntry "User chose to use drivers from a connected removable device.", LogTypeInfo
+                                    bUseUSB = True
+                                Else
+                                    oLogging.CreateEntry "User chose not to use drivers from a connected removable device.", LogTypeInfo
+                                    bUseUSB = False
+                                End if
+                            Else
+                                bUseUSB = False
+                                iRetVal = MsgBox("A connected device was detected." & VbCrLf &_
+                                                 "Do you wish to save the drivers used during this deployment on this device?",_
+                                                 4164, "Removable device connected")
+                                If iRetVal = 6 Then
+                                    oLogging.CreateEntry "User chose to save drivers on a connected removable device.", LogTypeInfo
+                                    bStoreToUSB = True
+                                Else
+                                    oLogging.CreateEntry "User chose not to save drivers on a connected removable device.", LogTypeInfo
+                                    bStoreToUSB = False
+                                End if
+                            End if
+                        Else
+                            bUseUSB = False
+                            bStoreToUSB = False
+                        End if
+                        If bUseUSB Then
+                            ' // Deploy using the drivers from the removable device
+                            oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                            oEnvironment.Item("DriverExportSourceType") = "Removable"
+                            oLogging.CreateEntry "The driver package located on the connected removable device (" & sUSBDriversPath & ") will be used for this deployment.", LogTypeInfo
+                            If FormatDisk Then
+                                oLogging.CreateEntry "Successfully performed Driver Provisioning (Type 1)", LogTypeInfo
+                                WScript.Quit 0
+                            Else
+                                oLogging.CreateEntry "Error provisioning drivers and preparing for Windows 10 installation", LogTypeError
+                                WScript.Quit 1
+                            End if
+                        Else
+                            If IsLMDrivers Then
+                                iRetVal = MsgBox("This is a machine previously deployed by ZTP, do you wish to perform a factory reset?" & VbCrLf &_
+                                                 "Click 'YES' to perform a factory reset." & VbCrLf &_
+                                                 "Click 'NO' to deploy this machine using the drivers available on the currently installed OS.",4164, "Factory Reset")
+                                If iRetVal = 6 Then
+                                    ' // Deploy using the LMDrivers package
+                                    oEnvironment.Item("DriverExportPath") = sLMDriversPath                                    
+                                    oEnvironment.Item("DriverExportSourceType") = "LMDrivers"
+                                    oLogging.CreateEntry "Performing a factory reset", LogTypeInfo
+                                    oLogging.CreateEntry "The driver package located on the machine (" & sLMDriversPath & ") will be used for this deployment.", LogTypeInfo
+                                    If FormatDisk Then
+                                        oLogging.CreateEntry "Successfully performed Driver Provisioning (Type 2)", LogTypeInfo
+                                        WScript.Quit 0
+                                    Else
+                                        oLogging.CreateEntry "Error provisioning drivers and preparing for Windows 10 installation", LogTypeError
+                                        WScript.Quit 1
+                                    End if                              
+                                Else
+                                    ' // Deploy using the drivers from the OS, without creating LMDrivers
+                                    oLogging.CreateEntry "Deploy using the drivers from the OS, without creating LMDrivers", LogTypeInfo
+                                    sRetVal = StandardDeployment(sOSDisk, False)
+                                    If sRetVal = "SUCCESS" Then
+                                        WScript.Quit 0
+                                    Else
+                                        DeploymentFailover sRetVal
+                                    End if
+                                End if
+                            Else
+                                ' // !!! MOST COMMON USECASE !!!
+                                ' // Deploy using the drivers from the OS, creating LMDrivers
+                                oLogging.CreateEntry "Deploy using the drivers from the OS, creating LMDrivers", LogTypeInfo
+                                sRetVal = StandardDeployment(sOSDisk, True)
+                                If sRetVal = "SUCCESS" Then
+                                    WScript.Quit 0
+                                Else
+                                    DeploymentFailover sRetVal
+                                End if 
+                            End if
+                        End if
+                    Else
+                        If IsLMDrivers Then
+                            iRetVal = MsgBox("This is a machine previously deployed by ZTP, do you wish to perform a factory reset?" & VbCrLf &_
+                                             "Click 'YES' to perform a factory reset." & VbCrLf &_
+                                             "Click 'NO' to deploy this machine using a different driver source.",4164, "Factory Reset")
+                            If iRetVal = 6 Then
+                                ' // Deploy using the LMDrivers package
+                                oEnvironment.Item("DriverExportPath") = sLMDriversPath                                    
+                                oEnvironment.Item("DriverExportSourceType") = "LMDrivers"
+                                oLogging.CreateEntry "Performing a factory reset", LogTypeInfo
+                                oLogging.CreateEntry "The driver package located on the machine (" & sLMDriversPath & ") will be used for this deployment.", LogTypeInfo
+                                If FormatDisk Then
+                                    oLogging.CreateEntry "Successfully performed Driver Provisioning (Type 7)", LogTypeInfo
+                                    WScript.Quit 0
+                                Else
+                                    oLogging.CreateEntry "Error provisioning drivers and preparing for Windows 10 installation", LogTypeError
+                                    WScript.Quit 1
+                                End if
+                            End if
+                        Else
+                            While (True)
+                                If IsDFSDrivers Then
+                                    iRetVal = MsgBox("A driver package for this computer was located on the network." & VbCrLf & VbCrLf &_
+                                                     "Click 'YES' to deploy this computer using this driver pacage." & VbCrLf &_
+                                                     "Click 'NO' to deploy this computer using a different driver source.",4164, "Device drivers")
+                                    If iRetVal = 6 Then
+                                        ' // Deploy using driver package from DFS
+                                        oEnvironment.Item("DriverExportPath") = sDFSDriversPath
+                                        oEnvironment.Item("DriverExportSourceType") = "DFSDrivers"
+                                        oEnvironment.Item("UseMDTFormatAndPartitionDisk") = "True"
+                                        oLogging.CreateEntry "The driver package located on DFS (" & sDFSDriversPath & ") will be used for this deployment.", LogTypeInfo
+                                        oLogging.CreateEntry "Will use standard MDT format and partition for this deployment", LogTypeInfo
+                                        WScript.Quit 0
+                                    End if
+                                End if
+                                If NOT IsUSBDrivers Then
+                                    If IsUSBConnected Then
+                                        sMessage = "No suitable drivers found on the connected device." & VbCrLf & VbCrLf
+                                    End if
+                                    MsgBox  sMessage & "To allow proper deployment, please connect a removable device (USB stick/drive) that " &_
+                                            "contains the necessary Windows 10 drivers for this computer: " & VbCrLf & VbCrLf & VbTab & oEnvironment.Item("model") & VbCrLf & VbCrLf &_
+                                            "Connect the device, then click OK", 4145, "Connect a removable device"
+                                End if
+                                If IsUSBDrivers Then
+                                    iRetVal = MsgBox("A driver package for this computer was located on a connected removable device." & VbCrLf & VbCrLf &_
+                                                     "Click 'YES' to deploy this computer using this driver pacage." & VbCrLf &_
+                                                     "Click 'NO' to deploy this computer using a different driver source.",4164, "Device drivers")
+                                    If iRetVal = 6 Then
+                                        ' // Deploy using driver package from USB                                  
+                                        oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                                        oEnvironment.Item("DriverExportSourceType") = "Removable"
+                                        oEnvironment.Item("UseMDTFormatAndPartitionDisk") = "True"
+                                        oLogging.CreateEntry "The driver package located on the connected removable device (" & sUSBDriversPath & ") will be used for this deployment.", LogTypeInfo
+                                        oLogging.CreateEntry "Will use standard MDT format and partition for this deployment", LogTypeInfo
+                                        WScript.Quit 0
+                                    End if
+                                End if
+                                If oEnvironment.Item("ExistingOSInstalled") = "True" Then
+                                    ' // Deploy using driver package from previously installed OS
+                                    iRetVal = MsgBox("This computer has " & oEnvironment.Item("ExistingProductName") & " installed." & VbCrLf &_
+                                                     "To deploy Windows 10 using drivers from the currently installed OS, click OK.", 4145, "Windows 10 deployment")
+                                    If iRetVal = 0 Then
+                                        ' // Upgrading from older Windows version!
+                                        ' // Deploy using the drivers from the OS, without creating LMDrivers
+                                        sRetVal = StandardDeployment(sOSDisk, False)
+                                        If sRetVal = "SUCCESS" Then
+                                            WScript.Quit 0
+                                        Else
+                                            DeploymentFailover sRetVal
+                                        End if
+                                    End if
+                                End if
+                            Wend
+                        End if
+                    End if
+                    
+                
+                Case Else
+                    oLogging.CreateEntry "Invalid argument passed. Action = " & oEnvironment.Item("Action") & ". Valid arguments are /ACTION:INJECT|PROVISION", LogTypeError
+                    WScript.Quit 1
+            End Select
+        
+        Else
+            oLogging.CreateEntry "Insufficient arguments passed. Deployment stopped", LogTypeError
+            WScript.Quit 1
+        End if
+
+        Main = SUCCESS
+
+    End Function
+    
+    Public Function RepairDISMforPowerShell
+        On Error Resume Next
+            If oFSO.FileExists("X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\Microsoft.Dism.Powershell.dll") Then
+                oFSO.DeleteFile "X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\Microsoft.Dism.Powershell.dll", True
+            End if
+            If oFSO.FileExists(oEnvironment.Item("DEPLOYROOT") & "\Servicing\x64\Microsoft.Dism.Powershell.dll") Then
+                oFSO.CopyFile oEnvironment.Item("DEPLOYROOT") & "\Servicing\x64\Microsoft.Dism.Powershell.dll", "X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\", True
+                If Err.Number <> 0 Then
+                    oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                    RepairDISMforPowerShell = False
+                    Err.Clear
+                Else
+                    RepairDISMforPowerShell = True
+                End if
+            Else
+                oLogging.CreateEntry "Unable to repair DISM module for PowerShell. Microsoft.Dism.Powershell.dll not found on the deployment share.", LogTypeError
+                RepairDISMforPowerShell = False
+            End if
+        On Error Goto 0
+    End Function
+    
+    Public Function GetAvailableDriveLetter()
+        Dim objVolumes, objVolume
+        Dim sLetters
+        sLetters = "H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,"
+        Set objVolumes = ListVolume
+        For Each objVolume in objVolumes.Items
+            If objVolume.Letter <> "" Then
+                sLetters = Replace(sLetters, objVolume.Letter & ",", "")
+            End if
+        Next
+        If Len(sLetters) > 0 Then
+            GetAvailableDriveLetter = Left(sLetters, 1)
+        Else
+            oLogging.CreateEntry "Error(1): No available driveletters!", LogTypeError
+            WScript.Quit 1
+        End if
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+    End Function
+    
+    Public Function IsUSBConnected
+        Dim objVolumes, objVolume, bConnected
+        IsUSBConnected = False
+        Set objVolumes = ListVolume
+        bConnected = False
+        For Each objVolume in objVolumes.Items
+            If objVolume.VolumeType = "Removable" Then
+                bConnected = True
+                sUSBDriveLetter = objVolume.Letter
+                Exit For
+            End if
+        Next
+        If bConnected Then
+            IsUSBConnected = True
+            oLogging.CreateEntry "There is a removable device connected. The device is assigned the drive letter: " & sUSBDriveLetter, LogTypeInfo
+        Else
+            IsUSBConnected = False
+            oLogging.CreateEntry "There is no removable device connected.", LogTypeInfo
+        End if
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+    End Function
+    
+    Public Function IsDFSDrivers
+        If oFSO.FolderExists("\\" & oEnvironment.Item("WDSServer") & "\mdt$\Common\Drivers\" & oEnvironment.Item("model")) Then
+            IsDFSDrivers = True
+            sDFSDriversPath = "\\" & oEnvironment.Item("WDSServer") & "\mdt$\Common\Drivers\" & oEnvironment.Item("model")
+        Else
+            IsDFSDrivers = False
+        End if
+    End Function
+    
+    Public Function IsUSBDrivers
+        Dim objVolumes, objVolume, bContainsDrivers
+        Dim Temp
+        IsUSBDrivers = False
+        Set objVolumes = ListVolume
+        For Each objVolume in objVolumes.Items
+            If objVolume.VolumeType = "Removable" Then
+                If objVolume.Letter <> "" Then
+                    If oFSO.FolderExists(objVolume.Letter & ":\" & oEnvironment.Item("model")) Then
+                        bContainsDrivers = True
+                        sUSBDriversPath = objVolume.Letter & ":\" & oEnvironment.Item("model")
+                    Else
+                        bContainsDrivers = False
+                    End If
+                Else
+                    Temp = GetAvailableDriveLetter
+                    If SelectVolume(objVolume.Index) Then
+                        If Assign(Temp) Then
+                            If oFSO.FolderExists(Temp & ":\" & oEnvironment.Item("model")) Then
+                                bContainsDrivers = True
+                                sUSBDriversPath = Temp & ":\" & oEnvironment.Item("model")
+                            Else
+                                bContainsDrivers = False
+                            End If                      
+                        End if
+                    End if
+                End if
+            End if
+        Next
+        If bContainsDrivers Then
+            IsUSBDrivers = True
+            oLogging.CreateEntry "The connected removable device contains drivers for this computer model. USBDriverPath = " & sUSBDriversPath, LogTypeInfo
+        Else
+            IsUSBDrivers = False
+            oLogging.CreateEntry "There are no removable devices connected that contains drivers for this computer model. USBDriverPath = " & sUSBDriversPath, LogTypeInfo
+        End if
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+    End Function
+    
+    Public Function IsLMDrivers
+        Dim objVolumes, objVolume
+        Dim Temp
+        IsLMDrivers = False
+        Set objVolumes = ListVolume
+        For Each objVolume in objVolumes.Items
+            If objVolume.Label = "LMDrivers" Then
+                If objVolume.Letter <> "" Then
+                    If oFSO.FolderExists(objVolume.Letter & ":\" & oEnvironment.Item("model")) Then
+                        IsLMDrivers = True
+                        sLMDriversPath = objVolume.Letter & ":\" & oEnvironment.Item("model")
+                    Else
+                        IsLMDrivers = False
+                    End If
+                Else
+                    Temp = GetAvailableDriveLetter
+                    If SelectVolume(objVolume.Index) Then
+                        If Assign(Temp) Then
+                            If oFSO.FolderExists(Temp & ":\" & oEnvironment.Item("model")) Then
+                                IsLMDrivers = True
+                                sLMDriversPath = Temp & ":\" & oEnvironment.Item("model")
+                            Else
+                                IsLMDrivers = False
+                            End If                       
+                        End if
+                    End if
+                End if
+            End if
+        Next
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+    End Function
+    
+    Public Function IsTempDrivers
+        Dim objVolumes, objVolume
+        Dim Temp
+        IsTempDrivers = False
+        Set objVolumes = ListVolume
+        For Each objVolume in objVolumes.Items
+            If objVolume.Label = "Temp" Then
+                If objVolume.Letter <> "" Then
+                    If oFSO.FolderExists(objVolume.Letter & ":\" & oEnvironment.Item("model")) Then
+                        IsTempDrivers = True
+                        sLMDriversPath = objVolume.Letter & ":\" & oEnvironment.Item("model")
+                    Else
+                        IsTempDrivers = False
+                    End If
+                Else
+                    Temp = GetAvailableDriveLetter
+                    If SelectVolume(objVolume.Index) Then
+                        If Assign(Temp) Then
+                            If oFSO.FolderExists(Temp & ":\" & oEnvironment.Item("model")) Then
+                                IsTempDrivers = True
+                                sLMDriversPath = Temp & ":\" & oEnvironment.Item("model")
+                            Else
+                                IsTempDrivers = False
+                            End If                       
+                        End if
+                    End if
+                End if
+            End if
+        Next
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+    End Function
+    
+    Public Function ExportWindowsDrivers(source, destination)
+        On Error Resume Next
+            oLogging.CreateEntry "Exporting third-party drivers from " & source & " to " & destination, LogTypeInfo
+            oLogging.CreateEntry "Command line: " & "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden " &_
+                        "-Command import-module dism;Export-WindowsDriver -Path " &_
+                        Chr(39) & source & Chr(39) & " -Destination " & Chr(39) & destination & Chr(39), LogTypeInfo
+            oShell.Run  "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden " &_
+                        "-Command import-module dism;Export-WindowsDriver -Path " &_
+                        Chr(39) & source & Chr(39) & " -Destination " & Chr(39) & destination & Chr(39), 0, True
+            If Err.Number <> 0 Then
+                oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                Err.Clear
+                ExportWindowsDrivers = False
+            Else
+                oLogging.CreateEntry "Successfully exported third-party drivers from " & source & " to " & destination, LogTypeInfo
+                ExportWindowsDrivers = True
+            End if
+        On Error Goto 0
+    End Function
+    
+    Public Function CreateLMDrivers(source, bPersist)
+        
+        Dim objVolumes, objVolume, objDriverExport
+        Dim Temp, sSizeRequired, sLabel
+        
+        If bPersist Then
+            sLabel = "LMDrivers"
+        Else
+            sLabel = "TMPDrivers"
+        End if
+        
+        If oFSO.FolderExists(source) Then
+            Set objVolumes = ListVolume
+            Temp = ""
+            For Each objVolume in objVolumes.Items
+                If objVolume.Letter = Left(source, 1) Then
+                    Temp = objVolume.Index
+                End if
+            Next
+            Set objDriverExport = oFSO.GetFolder(source)
+            sSizeRequired = Round(objDriverExport.Size / 1000000) + 100
+            oLogging.CreateEntry "Will create a partition of " & sSizeRequired & " MB to store these drivers.", LogTypeInfo
+            If SelectVolume(Temp) Then
+                If Shrink(sSizeRequired) Then
+                    If CreatePart("primary size=" & sSizeRequired) Then
+                        If Format("fs=ntfs quick label=" & sLabel) Then
+                            Temp = GetAvailableDriveLetter
+                            If Assign(Temp) Then
+                                oLogging.CreateEntry "Successfully created a temporary partition to store the exported drivers", LogTypeInfo
+                                If CopyDrivers(source, Temp & ":\" & oEnvironment.Item("model")) Then
+                                    oLogging.CreateEntry "Successfully copied exported drivers to the temporary partition.", LogTypeInfo
+                                    CreateLMDrivers = True
+                                    sLMDriversPath = Temp & ":\" & oEnvironment.Item("model")
+                                Else
+                                    oLogging.CreateEntry "Error copying the exported drivers to the temporary partition.", LogTypeError
+                                End if
+                            Else
+                                oLogging.CreateEntry "Error assigning driveletter!", LogTypeError
+                                CreateLMDrivers = False
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error formating partition!", LogTypeError
+                            CreateLMDrivers = False
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error creating partition!", LogTypeError
+                        CreateLMDrivers = False
+                    End if
+                Else
+                    oLogging.CreateEntry "Error shrinking the partition!", LogTypeError
+                    CreateLMDrivers = False
+                End if
+            Else
+                oLogging.CreateEntry "Error selecting volume!", LogTypeError
+                CreateLMDrivers = False
+            End if
+        Else
+            oLogging.CreateEntry "Error: The source could not be found, " & source, LogTypeError
+            CreateLMDrivers = False
+        End if
+    End Function
+        
+    Public Function CopyDrivers(source, destination)
+        On Error Resume Next
+            If oFSO.FolderExists(source) Then
+                oFSO.CopyFolder source, destination
+                If Err.Number <> 0 Then
+                    oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                    Err.Clear
+                    CopyDrivers = False
+                Else
+                    oLogging.CreateEntry "Successfully copied drivers to " & destination, LogTypeInfo
+                    CopyDrivers = True
+                End if
+            Else
+                oLogging.CreateEntry "Error (CopyDrivers): Unable to locate driver source folder, " & source, LogTypeError
+                CopyDrivers = False
+            End if
+        On Error Goto 0
+    End Function
+    
+    Public Function FormatDisk()
+        
+        Dim objVolumes, objVolume
+        Dim objDisks, objDisk
+        Dim objPartitions, objPartition
+        Dim iLMDriversPartition, iTMPDriversPartition, iOSPartition, iRetVal, arrDictKeys
+        
+        FormatDisk = False
+        
+        If NOT Rescan Then
+            oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+        End if
+        
+        If oEnvironment.Item("IsUEFI") = "True" Then
+        
+            ' // *********************
+            ' // Format GPT/UEFI disk
+            ' // *********************
+            
+            oLogging.CreateEntry "Formating disk for GPT/UEFI configuration", LogTypeInfo
+            
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Label = "LMDrivers") Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iLMDriversPartition = objPartition.Index
+                                oLogging.CreateEntry "Located LMDrivers partition, this partition will be kept as is.", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting LMDrivers volume (Volume " & objPartition.Index & ")", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                ElseIf (objVolume.Label = "TMPDrivers") Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iTMPDriversPartition = objPartition.Index
+                                oLogging.CreateEntry "Located LMDrivers partition, this partition will be kept as is.", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting LMDrivers volume (Volume " & objPartition.Index & ")", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+				ElseIf (objVolume.Letter = Left(oUtility.LogPath, 1)) Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iOSPartition = objPartition.Index
+                                oLogging.CreateEntry "Located partition used for logging", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting OSDisk volume (Volume " & objVolume.Index & ")", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                End if
+            Next
+            
+            If NOT Rescan Then
+                oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+            End if
+            
+            ' // Rebuilding partitions    
+            If SelectDisk(0) Then
+                
+                Set objDisks = ListDisk
+                For Each objDisk in objDisks.Items
+                    If objDisk.Selected Then
+                        If NOT objDisk.GPT Then
+                            DeploymentFailover("Error: The disk is not GPT format.")
+                        End if
+                    End if
+                Next
+                
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                For Each objPartition in objPartitions.Items
+                    If objPartition.Index <> iLMDriversPartition AND objPartition.Index <> iTMPDriversPartition Then
+                        If SelectPartition(objPartition.Index) Then
+							If objPartition.Index = iOSPartition Then
+								iRetVal = oShell.Run("xcopy " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS" & Chr(34) & " /D /s /e /h /y /c", 0, true)
+							End if
+                            If NOT DeletePartition Then
+                                oLogging.CreateEntry "Error deleting partition (Partition " & objPartition.Index & ")", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error selecting partition (Partition " & objPartition.Index & ")", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    End if
+                Next
+
+                If NOT Rescan Then
+                    oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+                End if
+                oLogging.CreateEntry "Completed partition clean up, checking current configuration.", LogTypeInfo
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                
+                ' // Create System (EFI) partition
+                If CreatePart("efi size=499") Then
+                    If Format("quick fs=fat32 label=" & Chr(34) & "System" & Chr(34)) Then
+                        If Assign("S") Then
+                            oLogging.CreateEntry "Successfully created the System partition.", LogTypeInfo
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (System)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partiton (System)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partiton (System)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create MSR partition
+                If CreatePart("msr size=128") Then
+                    oLogging.CreateEntry "Successfully created the MSR partition.", LogTypeInfo                     
+                Else
+                    oLogging.CreateEntry "Error creating partiton (MSR)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create Windows partition
+                If CreatePart("primary") Then
+                    If Shrink(6000) Then
+                        If Format("quick fs=ntfs label=" & Chr(34) & "Windows" & Chr(34)) Then
+                            If Assign("C") Then
+								oLogging.CreateEntry "THIS IS JUST THE SIMPLEST WAY TO CREATE LOG DIRECTORIES ON C:", LogTypeInfo
+								iRetVal = oShell.Run("xcopy " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS" & Chr(34) & " " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " /s /e /h /y /c", 0, true)
+                                oEnvironment.Item("OSDisk") = "C:"
+                                oLogging.CreateEntry "Successfully created the Windows partition.", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error assigning drive letter (Windows)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error formating partiton (Windows)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error shrinking partiton (Windows)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partiton (Windows)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create Recovery partition
+                If CreatePart("primary") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "Recovery" & Chr(34)) Then
+                        If Assign("R") Then
+                            If SetID("de94bba4-06d1-4d40-a16a-bfd50179d6ac") Then
+                                If GPTAttributes("0x8000000000000001") Then
+                                    oLogging.CreateEntry "Successfully created the Recovery partition.", LogTypeInfo
+                                Else
+                                    oLogging.CreateEntry "Error setting GPT attributes (Recovery)", LogTypeError
+                                    FormatDisk = False
+                                    Exit Function
+                                End if
+                            Else
+                                oLogging.CreateEntry "Error setting partition ID (Recovery)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if                           
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (Recovery)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partiton (Recovery)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partiton (Recovery)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                FormatDisk = True
+                
+            Else
+                oLogging.CreateEntry "Error selecting disk (Disk 0)", LogTypeError
+                FormatDisk = False
+            End if
+        Else
+        
+            ' // *********************
+            ' // Format MBR/BIOS disk
+            ' // *********************
+            
+            oLogging.CreateEntry "Formating disk for MBR/BIOS configuration", LogTypeInfo
+            
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Label = "LMDrivers") Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iLMDriversPartition = objPartition.Index
+                                oLogging.CreateEntry "Located LMDrivers partition, this partition will be kept as is.", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting LMDrivers volume (Volume " & objPartition.Index & ")", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+				ElseIf (objVolume.Letter = Left(oUtility.LogPath, 1)) Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iOSPartition = objPartition.Index
+                                oLogging.CreateEntry "Located partition used for logging", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting OSDisk volume (Volume " & objVolume.Index & ")", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                End if
+            Next
+            
+            If NOT Rescan Then
+                oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+            End if
+            
+            ' // Rebuilding partitons    
+            If SelectDisk(0) Then
+            
+                Set objDisks = ListDisk
+                For Each objDisk in objDisks.Items
+                    If objDisk.Selected Then
+                        If objDisk.GPT Then
+                            DeploymentFailover("Error: The disk is not MBR format.")
+                        End if
+                    End if
+                Next
+                
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                For Each objPartition in objPartitions.Items
+                    If objPartition.Index <> iLMDriversPartition AND objPartition.Index <> iTMPDriversPartition Then
+                        If SelectPartition(objPartition.Index) Then
+							If objPartition.Index = iOSPartition Then
+								iRetVal = oShell.Run("xcopy " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS" & Chr(34) & " /D /s /e /h /y /c", 0, true)
+							End if
+                            If NOT DeletePartition Then
+                                oLogging.CreateEntry "Error deleting partition (Partition " & objPartition.Index & ")", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error selecting partition (Partition " & objPartition.Index & ")", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    End if
+                Next
+                
+                If NOT Rescan Then
+                    oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+                End if
+                oLogging.CreateEntry "Completed partition clean up, checking current configuration.", LogTypeInfo
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                
+                ' // Create System partition
+                If CreatePart("primary size=499") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "System" & Chr(34)) Then
+                        If Assign("S") Then
+                            If SetActive Then
+                                oLogging.CreateEntry "Successfully created the System partition.", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error making the partition a boot partition (System)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if                           
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (System)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partiton (System)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partiton (System)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create Windows partition
+                If CreatePart("primary") Then
+                    If Shrink(6000) Then
+                        If Format("quick fs=ntfs label=" & Chr(34) & "Windows" & Chr(34)) Then
+                            If Assign("C") Then
+								oLogging.CreateEntry "THIS IS JUST THE SIMPLEST WAY TO CREATE LOG DIRECTORIES ON C:", LogTypeInfo
+								iRetVal = oShell.Run("xcopy " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS" & Chr(34) & " " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " /s /e /h /y /c", 0, true)
+                                oEnvironment.Item("OSDisk") = "C:"
+                                oLogging.CreateEntry "Successfully created the Windows partition.", LogTypeInfo                            
+                            Else
+                                oLogging.CreateEntry "Error assigning drive letter (Windows)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error formating partiton (Windows)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error shrinking partiton (Windows)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partiton (Windows)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create Recovery partition
+                If CreatePart("primary") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "Recovery" & Chr(34)) Then
+                        If Assign("R") Then
+                            If HideVolume Then
+                                oLogging.CreateEntry "Successfully created the Recovery partition.", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error hiding volume (Recovery)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (Recovery)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partiton (Recovery)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partiton (Recovery)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                FormatDisk = True
+                
+            Else
+                oLogging.CreateEntry "Error selecting disk (Disk 0)", LogTypeError
+                FormatDisk = False
+            End if
+        End if
+    End Function
+    
+    Public Function StandardDeployment(OSDriveLetter, bPersist)
+    
+        Dim bDriversExported, bLMDriversCreated, bLMDriversLocated, bFormated, bContinue, bComplete
+        Dim iGiveUp
+        
+        bDriversExported = False
+        bLMDriversCreated = False
+        bLMDriversLocated = False
+        bFormated = False
+        bComplete = False
+        iGiveUp = 0
+        
+        While (iGiveUp < 10)
+        
+            bContinue = True
+        
+            If NOT bDriversExported AND bContinue Then
+                If ExportWindowsDrivers(OSDriveLetter, OSDriveLetter & "\DriverExport") Then
+                    bDriversExported = True
+                Else
+                    bContinue = False
+                End if
+            End if
+            
+            If NOT bLMDriversCreated AND bContinue Then
+                If bPersist Then
+                    If CreateLMDrivers(OSDriveLetter & "\DriverExport", bPersist) Then
+                        bLMDriversCreated = True
+                    Else
+                        bContinue = False
+                    End if
+                Else
+                    If CreateLMDrivers(OSDriveLetter & "\DriverExport", bPersist) Then
+                        bLMDriversCreated = True
+                    Else
+                        bContinue = False
+                    End if
+                End if
+            End if
+            
+            If NOT bLMDriversLocated AND bContinue Then
+                If oFSO.FolderExists(sLMDriversPath) Then
+                    bLMDriversLocated = True
+                    oEnvironment.Item("DriverExportPath") = sLMDriversPath
+                    If bPersist Then
+                        oEnvironment.Item("DriverExportSourceType") = "LMDrivers"                        
+                    Else
+                        oEnvironment.Item("DriverExportSourceType") = "Temp"
+                    End if
+                    oLogging.CreateEntry "The driver package located on the machine (" & sLMDriversPath & ") will be used for this deployment.", LogTypeInfo
+                Else
+                    bContinue = False
+                End if
+            End if
+            
+            If NOT bFormated AND bContinue Then
+                If FormatDisk Then
+                    oLogging.CreateEntry "Successfully performed Driver Provisioning (Type 3)", LogTypeInfo
+                    bComplete = True
+                Else
+                    bContinue = False
+                End if
+            End if
+            
+            If NOT bContinue Then
+                iGiveUp = iGiveUp + 1
+                WScript.Sleep 5000
+            Else
+                iGiveUp = 100
+            End if
+            
+        Wend
+        
+        If bComplete Then
+            StandardDeployment = "SUCCESS"
+        Else
+            If NOT bDriversExported Then
+                StandardDeployment = "Error exporting drivers"
+            ElseIf NOT bLMDriversCreated Then
+                If bPersist Then
+                    StandardDeployment = "Error creating LMDrivers partition"
+                Else
+                    StandardDeployment = "Error creating temporary LMDrivers partition"
+                End if
+            ElseIf NOT bLMDriversLocated Then
+                If bPersist Then
+                    StandardDeployment = "Error locating LMDrivers"
+                Else
+                    StandardDeployment = "Error locating temporary LMDrivers"
+                End if
+            ElseIf NOT bFormated Then
+                StandardDeployment = "Error formating OS partition"                
+            Else
+                StandardDeployment = "Unknown error encountered"
+            End if
+        End if
+        
+    End Function
+    
+    Public Function DeploymentFailover(sReason)
+        oLogging.CreateEntry "Deployment has triggered Deployment Failover", LogTypeWarning
+        oLogging.CreateEntry "Reason: " & sReason, LogTypeWarning
+        While (True)
+            If IsDFSDrivers Then
+                iRetVal = MsgBox("A driver package for this computer was located on the network." & VbCrLf & VbCrLf &_
+                                 "Click 'YES' to deploy this computer using this driver pacage." & VbCrLf &_
+                                 "Click 'NO' to deploy this computer using drivers from a USB device instead.",4164, "Deployment Failover")
+                If iRetVal = 6 Then
+                    ' // Deploy using driver package from DFS
+                    oEnvironment.Item("DriverExportPath") = sDFSDriversPath
+                    oEnvironment.Item("DriverExportSourceType") = "DFSDrivers"
+                    oEnvironment.Item("UseMDTFormatAndPartitionDisk") = "True"
+                    oLogging.CreateEntry "The driver package located on DFS (" & sDFSDriversPath & ") will be used for this deployment.", LogTypeInfo
+                    oLogging.CreateEntry "Will use standard MDT format and partition for this deployment", LogTypeInfo
+                    WScript.Quit 0
+                End if
+            End if
+            If NOT IsUSBDrivers Then
+                If IsUSBConnected Then
+                    sMessage = "No suitable drivers found on the connected device." & VbCrLf & VbCrLf
+                End if
+                MsgBox  sMessage & "To allow proper deployment, please connect a removable device (USB stick/drive) that " &_
+                        "contains the necessary Windows 10 drivers for this computer: " & VbCrLf & VbCrLf & VbTab & oEnvironment.Item("model") & VbCrLf & VbCrLf &_
+                        "Connect the device, then click OK", 4145, "Deployment Failover"
+            End if
+            If IsUSBDrivers Then
+                iRetVal = MsgBox("A driver package for this computer was located on a connected removable device." & VbCrLf & VbCrLf &_
+                                 "Click 'YES' to deploy this computer using this driver pacage." & VbCrLf &_
+                                 "Click 'NO' to deploy this computer using a different driver source.",4164, "Deployment Failover")
+                If iRetVal = 6 Then
+                    ' // Deploy using driver package from USB                                  
+                    oEnvironment.Item("DriverExportPath") = sUSBDriversPath
+                    oEnvironment.Item("DriverExportSourceType") = "Removable"
+                    oEnvironment.Item("UseMDTFormatAndPartitionDisk") = "True"
+                    oLogging.CreateEntry "The driver package located on the connected removable device (" & sUSBDriversPath & ") will be used for this deployment.", LogTypeInfo
+                    oLogging.CreateEntry "Will use standard MDT format and partition for this deployment", LogTypeInfo
+                    WScript.Quit 0
+                End if
+            End if
+        Wend
+    End Function
+    
+End Class
+
+    </script>
+</job>

@@ -1,0 +1,81 @@
+<job id="ProvisionLanguagePacks">
+	<script language="VBScript" src="..\Scripts\ZTIUtility.vbs"/>
+	<script language="VBScript">
+
+	' // ***************************************************************************
+	' // 
+	' // Copyright (c) Aslak Tangen. All rights reserved.
+	' // 
+	' // Zero Touch Provisioning
+	' //
+	' // File:      ProvisionLanguagePacks.wsf
+	' // 
+	' // Version:   1.0
+	' // 
+	' // Purpose:   Provision Language Pack(s) to offline image
+	' // 
+	' // Usage:     cscript.exe ProvisionLanguagePacks.wsf /LPPath:<Path>
+	' // 
+	' // ***************************************************************************
+
+	Option Explicit
+
+	Dim oFiles, oFile, iRetVal
+
+	' Verify arguments are passed correctly
+	If oEnvironment.Exists("LPPath") Then
+
+		' If LPPath provided is a folder, add all packages included in that folder
+
+		If oFSO.FolderExists(oEnvironment.Item("LPPath")) Then
+			Set oFiles = oFSO.GetFolder(oEnvironment.Item("LPPath"))
+			For Each oFile in oFiles.Files
+				If (oFile.Type = "CAB File") Then
+					iRetVal = oShell.Run("DISM /Image:" & oEnvironment.Item("SMSTSLocalDataDrive") & "\ /Add-Package /PackagePath:" & Chr(34) & oFile.Path & Chr(34), 0, True)
+					If iRetVal <> 0 Then
+						oLogging.CreateEntry "Failed to add package: " & oFile.Path, LogTypeError
+						oLogging.CreateEntry "Command line: " & "DISM /Image:" & oEnvironment.Item("SMSTSLocalDataDrive") & "\ /Add-Package /PackagePath:" & Chr(34) & oFile.Path & Chr(34), LogTypeError
+						oLogging.CreateEntry "DISM Error code: " & iRetVal, LogTypeError
+					Else
+						oLogging.CreateEntry "Added package: " & oFile.Path, LogTypeInfo
+					End if
+				Else
+					oLogging.CreateEntry "Checked file, not a CAB File: " & oFile.Path & " - " & oFile.Type, LogTypeInfo
+				End if
+			Next
+
+		' If LPPath provided is a Cabinet File, add that package
+
+		ElseIf oFSO.FileExists(oEnvironment.Item("LPPath")) Then
+			Set oFile = oFSO.GetFile(oEnvironment.Item("LPPath"))
+			If oFile.Type = "CAB File" Then
+				iRetVal = oShell.Run("DISM /Image:" & oEnvironment.Item("SMSTSLocalDataDrive") & "\ /Add-Package /PackagePath:" & Chr(34) & oFile.Path & Chr(34), 0, True)
+				If iRetVal <> 0 Then
+					oLogging.CreateEntry "Failed to add package: " & oFile.Path, LogTypeError
+					oLogging.CreateEntry "Command line: DISM /Image:" & oEnvironment.Item("SMSTSLocalDataDrive") & "\ /Add-Package /PackagePath:" & Chr(34) & oFile.Path & Chr(34), LogTypeError
+					oLogging.CreateEntry "DISM Error code: " & iRetVal, LogTypeError
+				Else
+					oLogging.CreateEntry "Added package: " & oFile.Path, LogTypeInfo
+					iRetVal = oShell.Run("DISM /Image:" & oEnvironment.Item("SMSTSLocalDataDrive") & "\ /Set-UILang:" & oEnvironment.Item("UILanguage"), 0, True)
+					If iRetVal <> 0 Then
+						oLogging.CreateEntry "Failed to set UI language to: " & oEnvironment.Item("UILanguage"), LogTypeError
+						oLogging.CreateEntry "Command line: DISM /Image:" & oEnvironment.Item("SMSTSLocalDataDrive") & "\ /Set-UILang:" & oEnvironment.Item("UILanguage"), LogTypeError
+						oLogging.CreateEntry "DISM Error code: " & iRetVal, LogTypeError
+					Else
+						oLogging.CreateEntry "Successfully set UI language to: " & oEnvironment.Item("UILanguage"), LogTypeInfo
+						oEnvironment.Item("ImageLanguage001") = oEnvironment.Item("UILanguage")
+					End if
+				End if
+			Else
+				oLogging.CreateEntry "The file provided is not a CAB File: " & oFile.Path & " - " & oFile.Type, LogTypeError
+			End if
+		Else
+			oLogging.CreateEntry "Path not found, " &  oFSO.FolderExists("LPPath"), LogTypeError
+		End if
+	Else
+		oLogging.CreateEntry "Incorrect arguments passed to script.", LogTypeError
+		WScript.Quit 1
+	End if
+
+	</script>
+</job>

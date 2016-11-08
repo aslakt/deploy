@@ -1,0 +1,81 @@
+<job id="ProvisionWallpapers">
+	<script language="VBScript" src="..\Scripts\ZTIUtility.vbs"/>
+	<script language="VBScript">
+
+	' // ***************************************************************************
+	' // 
+	' // Copyright (c) Aslak Tangen. All rights reserved.
+	' // 
+	' // Zero Touch Provisioning
+	' //
+	' // File:      ProvisionWallpapers.vbs
+	' // 
+	' // Version:   1.0
+	' // 
+	' // Purpose:   Provisions Wallpapers to computers
+	' // 
+	' // Usage:     cscript.exe ProvisionWallpapers.vbs /SourcePath:<WallpaperSourcePath> /Active:<FileName.jpg> /ThemeName:<ThemeName>
+	' // 
+	' // ***************************************************************************
+	
+	Option Explicit
+
+	Dim sWallpaperRoot  : sWallpaperRoot = oEnvironment.Item("SMSTSLocalDataDrive") & "\Windows\Web\Wallpaper\"
+
+	' Verify arguments are passed correctly
+	If oEnvironment.Item("Active") = "" OR oEnvironment.Item("SourcePath") = "" Then
+		oLogging.CreateEntry "Incorrect arguments passed to script.", LogTypeError
+		WScript.Quit 1
+	End if
+
+	' Move default Windows 10 wallpaper
+	If oFSO.FileExists(sWallpaperRoot & "Windows\Img0.jpg") Then
+		On Error Resume Next
+			oFSO.CopyFile sWallpaperRoot & "Windows\Img0.jpg", sWallpaperRoot & "Theme1\Img0.jpg", True
+			If Err.Number <> 0 Then
+				oLogging.CreateEntry "Error copying file: " & Chr(34) & sWallpaperRoot & "Windows\Img0.jpg" & Chr(34) & " to " & Chr(34) & sWallpaperRoot & "Theme1\Img0.jpg" & Chr(34) & " - Error code: " & Err.Number, LogTypeError
+				WScript.Quit 1
+			Else
+				oLogging.CreateEntry "Default Windows 10 wallpaper copied to: " & sWallpaperRoot & "Theme1\Img0.jpg", LogTypeInfo
+				Err.Clear
+			End if
+		On Error Goto 0
+	Else
+		oLogging.CreateEntry "Default Windows 10 wallpaper not found: " & sWallpaperRoot & "Windows\Img0.jpg", LogTypeError
+		WScript.Quit 2
+	End if
+
+	If CreateFolder(sWallpaperRoot & oEnvironment.Item("ThemeName")) Then
+		On Error Resume Next
+			oFSO.CopyFile oEnvironment.Item("SourcePath") & "\*", sWallpaperRoot & oEnvironment.Item("ThemeName") & "\", True
+			If Err.Number <> 0 Then
+				oLogging.CreateEntry "Error deploying wallpaper files. - ErrorCode: " & Err.Number, LogTypeError
+				WScript.Quit Err.Number
+			Else
+				oLogging.CreateEntry "Wallpapers successfully deployed.", LogTypeInfo
+				Err.Clear
+			End if
+		On Error Goto 0
+	Else
+		oLogging.CreateEntry "Unable to create folder structure: " & sWallpaperRoot & oEnvironment.Item("ThemeName"), LogTypeError
+		WScript.Quit 1
+	End if
+
+	Function CreateFolder(Path)
+		Dim temp
+		If oFSO.FolderExists(Path) Then
+			CreateFolder = True
+		Else
+			temp = split(Path, "\")
+			temp(UBound(temp)) = "\\"
+			If CreateFolder(Replace(Join(temp, "\"), "\\\", "")) Then
+				oFSO.CreateFolder Path
+				CreateFolder = True
+			Else
+				CreateFolder = False
+			End if
+		End if
+	End Function
+
+	</script>
+</job>

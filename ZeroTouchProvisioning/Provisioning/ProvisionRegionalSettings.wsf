@@ -1,0 +1,54 @@
+<job id="ProvisionRegionalSettings">
+	<script language="VBScript" src="..\Scripts\ZTIUtility.vbs"/>
+	<script language="VBScript">
+
+	' // ***************************************************************************
+	' // 
+	' // Copyright (c) Aslak Tangen. All rights reserved.
+	' // 
+	' // Zero Touch Provisioning
+	' //
+	' // File:      ProvisionRegionalSettings.wsf
+	' // 
+	' // Version:   1.0
+	' // 
+	' // Purpose:   Provision Regional Settings to offline image
+	' // 
+	' // Usage:     cscript.exe ProvisionRegionalSettings.wsf
+	' // 
+	' // ***************************************************************************
+
+	Option Explicit
+
+	On Error Resume Next
+	If oEnvironment.Exists("KeyboardLocale") Then
+		oShell.Run "DISM /Image:" & oEnvironment.Item("OSDisk") & "\ /Set-InputLocale:" & oEnvironment.Item("KeyboardLocale"), 0, True
+		If Err.Number <> 0 Then
+			oLogging.CreateEntry "Error (" & Err.Number & ") Setting Keyboard Locale: " & Err.Description, LogTypeError
+			Err.Clear
+		Else
+			oLogging.CreateEntry "Successfully set Keyboard Locale", LogTypeInfo
+		End if
+	End if
+	If oEnvironment.Exists("UserLocale") Then
+		oShell.Run "DISM /Image:" & oEnvironment.Item("OSDisk") & "\ /Set-SysLocale:" & oEnvironment.Item("UserLocale"), 0, True
+		If Err.Number <> 0 Then
+			oLogging.CreateEntry "Error (" & Err.Number & ") Setting System Locale: " & Err.Description, LogTypeError
+			Err.Clear
+		Else
+			oLogging.CreateEntry "Successfully set System Locale", LogTypeInfo
+		End if
+		oShell.Run "DISM /Image:" & oEnvironment.Item("OSDisk") & "\ /Set-UserLocale:" & oEnvironment.Item("UserLocale"), 0, True
+		If Err.Number <> 0 Then
+			oLogging.CreateEntry "Error (" & Err.Number & ") Setting User Locale: " & Err.Description, LogTypeError
+			Err.Clear
+		Else
+			oLogging.CreateEntry "Successfully set User Locale", LogTypeInfo
+		End if
+	End if
+	On Error Goto 0
+
+	oLogging.CreateEntry "Finished provisioning Regional Settings", LogTypeInfo
+        
+	</script>
+</job>

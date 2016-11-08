@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DefaultAssociations>
+  <Association Identifier=".htm" ProgId="IE.AssocFile.HTM" ApplicationName="Internet Explorer" />
+  <Association Identifier=".html" ProgId="IE.AssocFile.HTM" ApplicationName="Internet Explorer" />
+  <Association Identifier=".mht" ProgId="IE.AssocFile.MHT" ApplicationName="Internet Explorer" />
+  <Association Identifier=".partial" ProgId="IE.AssocFile.PARTIAL" ApplicationName="Internet Explorer" />
+  <Association Identifier=".pdf" ProgId="AppXd4nrz8ff68srnhf9t5a8sbjyar1cr723" ApplicationName="Microsoft Edge" />
+  <Association Identifier=".svg" ProgId="IE.AssocFile.SVG" ApplicationName="Internet Explorer" />
+  <Association Identifier=".url" ProgId="IE.AssocFile.URL" ApplicationName="Internet Browser" />
+  <Association Identifier=".website" ProgId="IE.AssocFile.WEBSITE" ApplicationName="Internet Explorer" />
+  <Association Identifier=".xht" ProgId="IE.AssocFile.XHT" ApplicationName="Internet Explorer" />
+  <Association Identifier=".xhtml" ProgId="IE.AssocFile.XHT" ApplicationName="Internet Explorer" />
+  <Association Identifier="ftp" ProgId="IE.FTP" ApplicationName="Internet Explorer" />
+  <Association Identifier="http" ProgId="IE.HTTP" ApplicationName="Internet Explorer" />
+  <Association Identifier="https" ProgId="IE.HTTPS" ApplicationName="Internet Explorer" />
+  <Association Identifier="mk" ProgId="IE.HTTP" ApplicationName="Internet Explorer" />
+  <Association Identifier="res" ProgId="IE.HTTP" ApplicationName="Internet Explorer" />
+</DefaultAssociations>

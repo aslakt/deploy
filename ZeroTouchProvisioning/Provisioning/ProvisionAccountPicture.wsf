@@ -1,0 +1,51 @@
+<job id="ZTIApplications">
+	<script language="VBScript" src="..\Scripts\ZTIUtility.vbs"/>
+	<script language="VBScript">
+	
+	Option Explicit
+
+	' // ***************************************************************************
+	' // 
+	' // Copyright (c) Aslak Tangen. All rights reserved.
+	' // 
+	' // Zero Touch Provisioning
+	' //
+	' // File:      ProvisionAccountPicture.vbs
+	' // 
+	' // Version:   1.0
+	' // 
+	' // Purpose:   Sets the default Account Picture. The User Account Picture path
+	' //            provided must include all required image sizes, this script does
+	' //            not create them
+	' // 
+	' // Usage:     cscript.exe ProvisionAccountPicture.vbs /SourcePath:<AccountPicturesSourcePath> 
+	' // 
+	' // ***************************************************************************
+	
+	Dim sRootPath
+	
+	If oFSO.FolderExists(oEnvironment.Item("OSDISK")) Then
+		sRootPath = oEnvironment.Item("OSDISK")
+	Else
+		sRootPath = oEnvironment.Item("SMSTSLocalDataDrive")
+	End if
+	
+	If oFSO.FolderExists(oEnvironment.Item("SourcePath")) Then
+		On Error Resume Next
+			oLogging.CreateEntry "Attempting to copy " & Chr(34) & oEnvironment.Item("SourcePath") & "\*" & Chr(34) & " to " & Chr(34) & sRootPath & "\ProgramData\Microsoft\User Account Pictures" & Chr(34), LogTypeInfo
+			oFSO.CopyFile oEnvironment.Item("SourcePath") & "\*", sRootPath & "\ProgramData\Microsoft\User Account Pictures", True
+			If Err.Number <> 0 Then
+				oLogging.CreateEntry "Error copying account picture files - Error code: " & Err.Number, LogTypeError
+				WScript.Quit Err.Number
+			Else
+				oLogging.CreateEntry "User Account Picture successfully deployed.", LogTypeInfo
+				Err.Clear
+			End if
+		On Error Goto 0
+	Else
+		oLogging.CreateEntry "Source not found: " & oEnvironment.Item("SourcePath"), LogTypeError
+		WScript.Quit 3
+	End if
+
+	</script>
+</job>

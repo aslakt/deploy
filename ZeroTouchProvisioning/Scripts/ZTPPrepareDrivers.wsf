@@ -1,0 +1,273 @@
+<job id="ZTPPrepareDrivers">
+   <script language="VBScript" src="ZTIUtility.vbs"/>
+   <script language="VBScript" src="ZTPDiskPart.vbs"/>
+   <script language="VBScript">
+   
+' // ***************************************************************************
+' // 
+' // EVRY - Aslak Tangen - 08.11.2016
+' //
+' // File:      ZTPPrepareDrivers.wsf
+' // 
+' // Version:   1.0
+' // 
+' // Purpose:	This script exports third party drivers from an existing
+' //            Windows 10 installation. These drivers are installed on the
+' //            Windows volume, with the option to also store to a connected
+' //            removable device.
+' // 
+' // Usage:     cscript.exe %SCRIPTROOT%\ZTIPrepareDrivers.wsf
+' //
+' // TS-Vars:   DriversPath
+' //              - Path to where the drivers are exported, used to inject
+' //                after OS installation.
+' //
+' // Terms of use:
+' //            This script is provided "AS IS" with no warranties,
+' //            confers no rights and is not supported by the authors
+' //            by the authors or Deployment Artist. 
+' // 
+' // ***************************************************************************
+
+Option Explicit
+RunNewInstance
+
+Class ZTIPrepareDrivers
+
+    Dim sOSDisk, sOSDiskLetter
+    Dim sUSBDrivers, sUSBDriversLetter
+    Dim sLMDrivers, sLMDriversLetter
+    Dim arrRemovableDevies, sNetworkDrivers
+    Dim Device
+    
+    If oFSO.FolderExists(oEnvironment.Item("OSDISK")) Then
+        sOSDisk = oEnvironment.Item("OSDISK")
+    Else
+        sOSDisk = oEnvironment.Item("SMSTSLocalDataDrive")
+    End if
+    sOSDiskLetter = Left(sOSDisk, 1)
+    
+    arrRemovableDevies = GetRemovableDevicesArray
+    sNetworkDrivers = GetNetworkDrivers
+    sLMDrivers = GetLMDrivers
+    sUSBDrivers = GetUSBDrivers
+    
+    If sUSBDrivers <> "" Then
+        ' // USBDrivers are available - ask to use them
+        ' // IF YES
+            ' // If Not LMDrivers - preserve drivers on new LMDrivers
+            ' // Else leave LMDrivers alone
+    ElseIf sLMDrivers <> "" AND InStr(oEnvironment.Item("ExistingProductName"), "Windows 10") > 0 Then
+        ' // Previously deployed by ZTP and Windows 10 installed, factory reset?
+        ' // YES = Use LMDrivers
+        ' // NO = Use Windows 10 Drivers
+    ElseIf sLMDrivers <> "" Then
+        ' // Only LMDrivers - Use them
+    ElseIf InStr(oEnvironment.Item("ExistingProductName"), "Windows 10") > 0 Then
+        ' // No LMDrivers, but Windows 10 is preinstalled - DriverExport
+    Else
+        ' // Need drivers from USB or Network
+        If sNetworkDrivers <> "" Then
+            ' // Use NetworkDrivers!
+        Else
+            While (GetUSBDrivers = "")
+                ' // Ask user to insert a USB with drivers
+                ' // OK = Look again
+                ' // CANCEL = Terminate
+            Wend
+            ' // USBDrivers are available - use them
+            ' // IF YES
+                ' // If Not LMDrivers - preserve drivers on new LMDrivers
+                ' // Else leave LMDrivers alone
+        End if
+    End if
+
+    Sub StoreDriversToUSB()
+    
+        If UBound(arrRemovableDevies) < 0 Then
+            If sUSBDrivers <> "" Then sUSBDriversLetter = Left(sUSBDrivers, 1)
+            For Each Device in arrRemovableDevies
+                If UCase(Device) <> UCase(sUSBDriversLetter) Then
+                    ' // There are applicable removable devices connected - Ask user to save drivers to this device
+                End if
+            Next
+        End if
+    
+    End Sub
+    
+    Public Function ExportDrivers(source, destination)
+        On Error Resume Next
+            oLogging.CreateEntry "Exporting third-party drivers from " & source & " to " & destination, LogTypeInfo
+            oLogging.CreateEntry "Command line: " & "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden " &_
+                        "-Command import-module dism;Export-WindowsDriver -Path " &_
+                        Chr(39) & source & Chr(39) & " -Destination " & Chr(39) & destination & Chr(39), LogTypeInfo
+            oShell.Run  "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden " &_
+                        "-Command import-module dism;Export-WindowsDriver -Path " &_
+                        Chr(39) & source & Chr(39) & " -Destination " & Chr(39) & destination & Chr(39), 0, True
+            If Err.Number <> 0 Then
+                oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                Err.Clear
+                ExportWindowsDrivers = False
+            Else
+                oLogging.CreateEntry "Successfully exported third-party drivers from " & source & " to " & destination, LogTypeInfo
+                ExportWindowsDrivers = True
+            End if
+        On Error Goto 0
+    End Function
+    
+    Public Function GetRemovableDevicesArray
+    
+        Dim objVolumes, objVolume
+        Dim iSize
+        ReDim arrDevices(0)
+        
+        Set objVolumes = ListVolume
+        
+        For Each objVolume in objVolumes.Items
+            If objVolume.VolumeType = "Removable" Then
+                iSize = UBound(arrDevices) + 1
+                ReDim Preserve arrDevices(iSize)
+                arrDevices(iSize) = objVolume.Letter
+            End if
+        Next
+        
+        GetRemovableDevicesArray = arrDevices
+        
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+        
+    End Function
+    
+    
+    Public Function GetNetworkDrivers
+    
+        Set GetNetworkDrivers = ""
+        
+        If oFSO.FolderExists("\\" & oEnvironment.Item("WDSServer") & "\mdt$\Common\Drivers\" & oEnvironment.Item("model")) Then
+            GetNetworkDrivers = "\\" & oEnvironment.Item("WDSServer") & "\mdt$\Common\Drivers\" & oEnvironment.Item("model")
+        End if
+        
+    End Function
+    
+    
+    Public Function GetLMDrivers
+    
+        Dim objVolumes, objVolume
+        Dim Temp
+        
+        Set GetLMDrivers = ""
+        Set objVolumes = ListVolume
+        
+        For Each objVolume in objVolumes.Items
+            If objVolume.Label = "LMDrivers" Then
+                If objVolume.Letter <> "" Then
+                    If oFSO.FolderExists(objVolume.Letter & ":\" & oEnvironment.Item("model")) Then
+                        GetLMDrivers = objVolume.Letter & ":\" & oEnvironment.Item("model")
+                    End If
+                Else
+                    Temp = GetAvailableDriveLetter
+                    If SelectVolume(objVolume.Index) Then
+                        If Assign(Temp) Then
+                            If oFSO.FolderExists(Temp & ":\" & oEnvironment.Item("model")) Then
+                                GetLMDrivers = Temp & ":\" & oEnvironment.Item("model")
+                            End If                       
+                        End if
+                    End if
+                End if
+            End if
+        Next
+        
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+        
+    End Function
+    
+    
+    Public Function GetUSBDrivers
+    
+        Dim objVolumes, objVolume
+        Dim Temp
+        
+        Set GetUSBDrivers = ""
+        Set objVolumes = ListVolume
+        
+        For Each objVolume in objVolumes.Items
+            If objVolume.VolumeType = "Removable" Then
+                If objVolume.Letter <> "" Then
+                    If oFSO.FolderExists(objVolume.Letter & ":\" & oEnvironment.Item("model")) Then
+                        GetUSBDrivers = objVolume.Letter & ":\" & oEnvironment.Item("model")
+                    End If
+                Else
+                    Temp = GetAvailableDriveLetter
+                    If SelectVolume(objVolume.Index) Then
+                        If Assign(Temp) Then
+                            If oFSO.FolderExists(Temp & ":\" & oEnvironment.Item("model")) Then
+                                GetUSBDrivers = Temp & ":\" & oEnvironment.Item("model")
+                            End If                      
+                        End if
+                    End if
+                End if
+            End if
+        Next
+        
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+        
+    End Function
+    
+    
+    Public Function RepairDISMforPowerShell
+    
+        On Error Resume Next
+        
+            If oFSO.FileExists("X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\Microsoft.Dism.Powershell.dll") Then
+                oFSO.DeleteFile "X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\Microsoft.Dism.Powershell.dll", True
+            End if
+            
+            If oFSO.FileExists(oEnvironment.Item("DEPLOYROOT") & "\Servicing\x64\Microsoft.Dism.Powershell.dll") Then
+                oFSO.CopyFile oEnvironment.Item("DEPLOYROOT") & "\Servicing\x64\Microsoft.Dism.Powershell.dll", "X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\", True
+                If Err.Number <> 0 Then
+                    oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                    RepairDISMforPowerShell = False
+                    Err.Clear
+                Else
+                    RepairDISMforPowerShell = True
+                End if
+            Else
+                oLogging.CreateEntry "Unable to repair DISM module for PowerShell. Microsoft.Dism.Powershell.dll not found on the deployment share.", LogTypeError
+                RepairDISMforPowerShell = False
+            End if
+            
+        On Error Goto 0
+        
+    End Function
+    
+    Public Function GetAvailableDriveLetter
+    
+        Dim objVolumes, objVolume
+        Dim sLetters
+        
+        sLetters = "H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,"
+        Set objVolumes = ListVolume
+        For Each objVolume in objVolumes.Items
+            If objVolume.Letter <> "" Then
+                sLetters = Replace(sLetters, objVolume.Letter & ",", "")
+            End if
+        Next
+        
+        If Len(sLetters) > 0 Then
+            GetAvailableDriveLetter = Left(sLetters, 1)
+        Else
+            oLogging.CreateEntry "Error(1): No available driveletters!", LogTypeError
+            WScript.Quit 1
+        End if
+        
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+        
+    End Function
+    
+End Class
+
+    </script>
+</job>
