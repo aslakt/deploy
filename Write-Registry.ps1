@@ -44,36 +44,54 @@ Function Write-Registry {
         [Switch]$DefaultUser
     )
 
+    Function RegRootConverter($RegRoot) {
+        if ("HKEY_CLASSES_ROOT" -eq $RegRoot) {
+            return "HKCR"
+        }
+        elseif ("HKEY_CURRENT_USER" -eq $RegRoot) {
+            return "HKCU"
+        }
+        elseif ("HKEY_LOCAL_MACHINE" -eq $RegRoot) {
+            return "HKLM"
+        }
+        elseif ("HKEY_USERS" -eq $RegRoot) {
+            return "HKU"
+        }
+        elseif ("HKCR" -eq $RegRoot) {
+            return "HKEY_CLASSES_ROOT"
+        }
+        elseif ("HKCU" -eq $RegRoot) {
+            return "HKEY_CURRENT_USER"
+        }
+        elseif ("HKLM" -eq $RegRoot) {
+            return "HKEY_LOCAL_MACHINE"
+        }
+        elseif ("HKU" -eq $RegRoot) {
+            return "HKEY_USERS"
+        }
+        else {
+            Write-Error "Invalid RegRoot ($RegRoot)"
+        }
+    }
+
     if (!(Split-Path $Path -IsAbsolute)) {
         $SplitPath = ($Path.Split("\"))
         try {
             Switch ($SplitPath[0]) {
                 "HKEY_CLASSES_ROOT" {
-                    if ($null -eq (Get-PSDrive HKCR -ErrorAction SilentlyContinue)) {
-                        New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT
-                    }
                     $SplitPath[0] = "HKCR:"
                     $Path = $SplitPath.Join("\")
                 }
                 "HKEY_CURRENT_USER" {
-                    if ($null -eq (Get-PSDrive HKCU -ErrorAction SilentlyContinue)) {
-                        New-PSDrive -Name HKCU -PSProvider Registry -Root HKEY_CLASSES_ROOT
-                    }
                     $SplitPath[0] = "HKCU:"
                     $Path = $SplitPath.Join("\")
                 }
                 "HKEY_LOCAL_MACHINE" {
-                    if ($null -eq (Get-PSDrive HKLM -ErrorAction SilentlyContinue)) {
-                        New-PSDrive -Name HKLM -PSProvider Registry -Root HKEY_CLASSES_ROOT
-                    }
                     $SplitPath[0] = "HKLM:"
                     $Path = $SplitPath.Join("\")
 
                 }
                 "HKEY_USERS" {
-                    if ($null -eq (Get-PSDrive HKU -ErrorAction SilentlyContinue)) {
-                        New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT
-                    }
                     $SplitPath[0] = "HKU:"
                     $Path = $SplitPath.Join("\")
                 }
@@ -85,6 +103,11 @@ Function Write-Registry {
         catch {
             Throw "Invalid Path specified ($Path)"
         }
+    }
+    
+    $Root = (Split-Path $Path -Qualifier).replace(":","")
+    if ($null -eq (Get-PSDrive $Root -ErrorAction SilentlyContinue)) {
+        New-PSDrive -Name $Root -PSProvider Registry -Root (RegRootConverter $Root)
     }
 
     if ($DefaultUser) {
