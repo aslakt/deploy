@@ -39,11 +39,53 @@ Function Write-Registry {
         [Parameter(Mandatory=$true, Position=2, ParameterSetName="Value")]
         [Object]$Value,
         [Parameter(Mandatory=$false, Position=3, ParameterSetName="Value")]
-        [ValidateSet("REG_SZ", "REG_EXPAND_SZ", "REG_BINARY", "REG_DWORD", "REG_MULTI_SZ", "REG_QWORD", "REG_RESOURCE_LIST")]
-        [string]$Type="REG_SZ",
+        [Microsoft.Win32.RegistryValueKind]$Type="String",
         [Parameter]
         [Switch]$DefaultUser
     )
+
+    if (!(Split-Path $Path -IsAbsolute)) {
+        $SplitPath = ($Path.Split("\"))
+        try {
+            Switch ($SplitPath[0]) {
+                "HKEY_CLASSES_ROOT" {
+                    if ($null -eq (Get-PSDrive HKCR -ErrorAction SilentlyContinue)) {
+                        New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT
+                    }
+                    $SplitPath[0] = "HKCR:"
+                    $Path = $SplitPath.Join("\")
+                }
+                "HKEY_CURRENT_USER" {
+                    if ($null -eq (Get-PSDrive HKCU -ErrorAction SilentlyContinue)) {
+                        New-PSDrive -Name HKCU -PSProvider Registry -Root HKEY_CLASSES_ROOT
+                    }
+                    $SplitPath[0] = "HKCU:"
+                    $Path = $SplitPath.Join("\")
+                }
+                "HKEY_LOCAL_MACHINE" {
+                    if ($null -eq (Get-PSDrive HKLM -ErrorAction SilentlyContinue)) {
+                        New-PSDrive -Name HKLM -PSProvider Registry -Root HKEY_CLASSES_ROOT
+                    }
+                    $SplitPath[0] = "HKLM:"
+                    $Path = $SplitPath.Join("\")
+
+                }
+                "HKEY_USERS" {
+                    if ($null -eq (Get-PSDrive HKU -ErrorAction SilentlyContinue)) {
+                        New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT
+                    }
+                    $SplitPath[0] = "HKU:"
+                    $Path = $SplitPath.Join("\")
+                }
+                "Default" {
+                    Throw "Invalid Path specified ($Path)"
+                }
+            }
+        }
+        catch {
+            Throw "Invalid Path specified ($Path)"
+        }
+    }
 
     if ($DefaultUser) {
         try {
