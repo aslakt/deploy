@@ -1,0 +1,824 @@
+<job id="ZTPFormatAndPartition">
+   <script language="VBScript" src="ZTIUtility.vbs"/>
+   <script language="VBScript" src="ZTPDiskPart.vbs"/>
+   <script language="VBScript">
+   
+	' // ***************************************************************************
+	' // 
+	' // Laerdal Medical - Aslak Tangen - 19.04.2017
+	' //
+	' // File:      ZTPFormatAndPartition.wsf
+	' // 
+	' // Version:   2.0
+	' // 
+	' // Purpose:	This script exports third party drivers from an existing
+	' //            Windows 10 installation and stores them on the Recovery
+	' // 			partition.
+	' //			It also prepares the disk for Windows installation.
+	' // 
+	' // Usage:     cscript.exe %SCRIPTROOT%\ZTPFormatAndPartition.wsf
+	' //
+	' // Terms of use:
+	' //            This script is provided "AS IS" with no warranties,
+	' //            confers no rights and is not supported by the authors
+	' //            by the authors or Deployment Artist. 
+	' // 
+	' // ***************************************************************************
+
+    Dim sOSDisk, sOSDiskLetter
+
+    If oFSO.FolderExists(oEnvironment.Item("OSDISK")) Then
+        sOSDisk = oEnvironment.Item("OSDISK")
+    Else
+        sOSDisk = oEnvironment.Item("SMSTSLocalDataDrive")
+    End if
+    sOSDiskLetter = Left(sOSDisk, 1)
+    
+    If oEnvironment.Item("LMDriverOption") = "Recovery" Then
+        If PrepareDisk("Recovery", sOSDiskLetter) Then
+            If FormatDisk(False) Then
+                oLogging.CreateEntry "Successfully stored drivers and prepared disk for Windows installation!", LogTypeInfo
+                WScript.Quit 0
+            Else
+                oLogging.CreateEntry "Error formating disk.", LogTypeError
+                WScript.Quit 1
+            End If
+        Else
+            oLogging.CreateEntry "Error storing exported drivers temporarily.", LogTypeError
+            WScript.Quit 1
+        End If
+    ElseIf oEnvironment.Item("LMDriverOption") = "LegacyRecovery" Then
+        If CopyDrivers(GetLegacyLMDrivers, sOSDiskLetter & ":\DriverExport") Then
+            If CreateRecoveryDrivers(sOSDiskLetter & ":\DriverExport") Then
+                If FormatDisk(False) Then
+                    oLogging.CreateEntry "Successfully stored drivers and prepared disk for Windows installation!", LogTypeInfo
+                    WScript.Quit 0
+                Else
+                    oLogging.CreateEntry "Error formating disk.", LogTypeError
+                    WScript.Quit 1
+                End If
+            Else
+                oLogging.CreateEntry "Error storing exported drivers.", LogTypeError
+                WScript.Quit 1
+            End If
+        Else
+            oLogging.CreateEntry "Error copying legacy drivers to " & sOSDiskLetter & ":\DriverExport", LogTypeError
+            WScript.Quit 1
+        End If
+    ElseIf oEnvironment.Item("LMDriverOption") = "Network" OR oEnvironment.Item("LMDriverOption") = "USB" OR oEnvironment.Item("LMDriverOption") = "Skip" Then
+        If FormatDisk(True) Then
+            oLogging.CreateEntry "Successfully prepared disk for Windows installation!", LogTypeInfo
+            WScript.Quit 0
+        Else
+            oLogging.CreateEntry "Error formating disk.", LogTypeError
+            WScript.Quit 1
+        End If
+    Else
+        If ExportDrivers(sOSDisk, sOSDiskLetter & ":\DriverExport") Then
+            If CreateRecoveryDrivers(sOSDiskLetter & ":\DriverExport") Then
+                If FormatDisk(False) Then
+                    oLogging.CreateEntry "Successfully stored drivers and prepared disk for Windows installation!", LogTypeInfo
+                    WScript.Quit 0
+                Else
+                    oLogging.CreateEntry "Error formating disk.", LogTypeError
+                    WScript.Quit 1
+                End If
+            Else
+                oLogging.CreateEntry "Error storing exported drivers.", LogTypeError
+                WScript.Quit 1
+            End If
+        Else
+            oLogging.CreateEntry "Error exporting drivers.", LogTypeError
+            WScript.Quit 1
+        End If
+    End if
+    
+    Function ExportDrivers(source, destination)
+        If RepairDISMforPowerShell Then
+            oLogging.CreateEntry "Successfully repaired DISM for PowerShell.", LogTypeInfo
+            On Error Resume Next
+                oLogging.CreateEntry "Exporting third-party drivers from " & source & " to " & destination, LogTypeInfo
+                oLogging.CreateEntry "Command line: " & "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden " &_
+                            "-Command import-module dism;Export-WindowsDriver -Path " &_
+                            Chr(39) & source & Chr(39) & " -Destination " & Chr(39) & destination & Chr(39), LogTypeInfo
+                oShell.Run  "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden " &_
+                            "-Command import-module dism;Export-WindowsDriver -Path " &_
+                            Chr(39) & source & Chr(39) & " -Destination " & Chr(39) & destination & Chr(39), 0, True
+                If Err.Number <> 0 Then
+                    oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                    Err.Clear
+                    ExportDrivers = False
+                Else
+                    oLogging.CreateEntry "Successfully exported third-party drivers from " & source & " to " & destination, LogTypeInfo
+                    ExportDrivers = True
+                End if
+            On Error Goto 0
+        Else
+            ExportDrivers = False
+        End if
+    End Function
+    
+    Function RepairDISMforPowerShell
+	
+        oLogging.CreateEntry "Attempting to repair DISM for PowerShell.", LogTypeInfo
+    
+        On Error Resume Next
+        
+            If oFSO.FileExists("X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\Microsoft.Dism.Powershell.dll") Then
+                oFSO.DeleteFile "X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\Microsoft.Dism.Powershell.dll", True
+            End if
+            
+            If oFSO.FileExists(oEnvironment.Item("DEPLOYROOT") & "\Servicing\x64\Microsoft.Dism.Powershell.dll") Then
+                oFSO.CopyFile oEnvironment.Item("DEPLOYROOT") & "\Servicing\x64\Microsoft.Dism.Powershell.dll", "X:\Windows\System32\WindowsPowerShell\v1.0\Modules\Dism\", True
+                If Err.Number <> 0 Then
+                    oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                    RepairDISMforPowerShell = False
+                    Err.Clear
+                Else
+                    RepairDISMforPowerShell = True
+                End if
+            Else
+                oLogging.CreateEntry "Unable to repair DISM module for PowerShell. Microsoft.Dism.Powershell.dll not found on the deployment share.", LogTypeError
+                RepairDISMforPowerShell = False
+            End if
+            
+        On Error Goto 0
+        
+    End Function
+
+    Function GetLegacyLMDrivers
+    
+        Dim objVolumes, objVolume
+        Dim Temp
+        
+        GetLegacyLMDrivers = ""
+        Set objVolumes = ListVolume
+        
+        For Each objVolume in objVolumes.Items
+            If objVolume.Label = "LMDrivers" Then
+                If objVolume.Letter <> "" Then
+                    If oFSO.FolderExists(objVolume.Letter & ":\" & oEnvironment.item("model")) Then
+                        GetLegacyLMDrivers = objVolume.Letter & ":\" & oEnvironment.item("model")
+                    End If
+                Else
+                    Temp = GetAvailableDriveLetter
+                    If SelectVolume(objVolume.Index) Then
+                        If Assign(Temp) Then
+                            If oFSO.FolderExists(Temp & ":\" & oEnvironment.item("model")) Then
+                                GetLegacyLMDrivers = Temp & ":\" & oEnvironment.item("model")
+                            End If                       
+                        End if
+                    End if
+                End if
+            End if
+        Next
+        
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+        
+    End Function
+    
+    Function GetAvailableDriveLetter
+    
+        Dim objVolumes, objVolume
+        Dim sLetters
+        
+        sLetters = "H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,"
+        Set objVolumes = ListVolume
+        For Each objVolume in objVolumes.Items
+            If objVolume.Letter <> "" Then
+                sLetters = Replace(sLetters, objVolume.Letter & ",", "")
+            End if
+        Next
+        
+        If Len(sLetters) > 0 Then
+            GetAvailableDriveLetter = Left(sLetters, 1)
+        Else
+            oLogging.CreateEntry "Error(1): No available driveletters!", LogTypeError
+            WScript.Quit 1
+        End if
+        
+        Set objVolume = Nothing
+        Set objVolumes = Nothing
+        
+    End Function
+    
+    Function CreateRecoveryDrivers(source)
+        
+        Dim objVolumes, objVolume, objDriverExport
+        Dim OSDiskLetter, TempDiskLetter, sSizeRequired, iWindowsPartition
+        
+        CreateRecoveryDrivers = False
+        
+        If oFSO.FolderExists(source) Then
+            Set objVolumes = ListVolume
+            OSDiskLetter = ""
+            For Each objVolume in objVolumes.Items
+                If objVolume.Letter = Left(source, 1) Then
+                    OSDiskLetter = objVolume.Letter
+                End if
+            Next
+
+            If NOT Rescan Then
+                oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+            End if
+            
+            ' Find partitions not to delete
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Letter = OSDiskLetter) Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iWindowsPartition = objPartition.Index
+                                oLogging.CreateEntry "Located Windows partition.", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting Windows volume (Volume " & objPartition.Index & ")", LogTypeError
+                        CreateRecoveryDrivers = False
+                        Exit Function
+                    End if
+                End if
+            Next
+            
+            'Delete all other partitions
+            If SelectDisk(0) Then
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                For Each objPartition in objPartitions.Items
+                    If objPartition.Index <> iWindowsPartition Then
+                        If SelectPartition(objPartition.Index) Then
+                            If DeletePartition Then
+                                oLogging.CreateEntry "Successfully deleted partition (Partition " & objPartition.Index & ")", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error deleting partition (Partition " & objPartition.Index & ")", LogTypeError
+                                CreateRecoveryDrivers = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error selecting partition (Partition " & objPartition.Index & ")", LogTypeError
+                            CreateRecoveryDrivers = False
+                            Exit Function
+                        End if
+                    End if
+                Next
+            Else
+                oLogging.CreateEntry "Error selecting disk (Disk 0)", LogTypeError
+                CreateRecoveryDrivers = False
+                Exit Function
+            End if
+            
+            'Extend Windows Partition
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Letter = OSDiskLetter) Then
+                    If SelectVolume(objVolume.Index) Then
+                        If Extend Then
+                            oLogging.CreateEntry "Successfully extended the Windows volume (Volume " & objVolume.Index & ")", LogTypeInfo
+                        Else
+                            oLogging.CreateEntry "Unable to extend the Windows volume (Volume " & objVolume.Index & ")", LogTypeWarning
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error selecting Windows volume (Volume " & objVolume.Index & ")", LogTypeError
+                        CreateRecoveryDrivers = False
+                        Exit Function
+                    End if
+                End if                
+            Next
+
+            ' // Create Recovery partition
+            If Shrink(5000) Then
+                If CreatePart("primary") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "Recovery" & Chr(34)) Then
+                        If Assign("R") Then
+                            'Copy drivers to the partition
+                            If CopyDrivers(source, "R:\LMDrivers") Then
+                                oLogging.CreateEntry "Successfully copied exported drivers to R:\LMDrivers", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error copying exported drivers to R:\LMDrivers", LogTypeError
+                                CreateRecoveryDrivers = False
+                                Exit Function
+                            End if
+                            If SetID("de94bba4-06d1-4d40-a16a-bfd50179d6ac") Then
+                                If GPTAttributes("0x8000000000000001") Then
+                                    oLogging.CreateEntry "Successfully created the Recovery partition.", LogTypeInfo
+                                Else
+                                    oLogging.CreateEntry "Error setting GPT attributes (Recovery)", LogTypeError
+                                    CreateRecoveryDrivers = False
+                                    Exit Function
+                                End if
+                            Else
+                                oLogging.CreateEntry "Error setting partition ID (Recovery)", LogTypeError
+                                CreateRecoveryDrivers = False
+                                Exit Function
+                            End if                           
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (Recovery)", LogTypeError
+                            CreateRecoveryDrivers = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partition (Recovery)", LogTypeError
+                        CreateRecoveryDrivers = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partition (Recovery)", LogTypeError
+                    CreateRecoveryDrivers = False
+                    Exit Function
+                End if
+            Else
+                oLogging.CreateEntry "Error shrinking the OS partition to make room for a Recovery partition.", LogTypeError
+                CreateRecoveryDrivers = False
+            End if
+			
+            ' // Delete Windows Partition
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Letter = OSDiskLetter) Then
+                    If SelectVolume(objVolume.Index) Then
+                        ' Make sure we don't cache the local root path
+                        oUtility.CacheLocalRootPath = False
+                        oLogging.CreateEntry "Moving the logs, then deleting the Windows partition.", LogTypeInfo
+                        oShell.Run "xcopy " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS\*" & Chr(34) & " /D /s /e /h /y /c", 0, true
+                        If DeletePartition Then
+                            oLogging.CreateEntry "Successfully deleted the Windows Partition", LogTypeInfo
+                            CreateRecoveryDrivers = True
+                        Else
+                            oLogging.CreateEntry "Error deleting the Windows Partition", LogTypeError
+                            CreateRecoveryDrivers = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error selecting Windows volume (Volume " & objPartition.Index & ")", LogTypeError
+                        CreateRecoveryDrivers = False
+                        Exit Function
+                    End if
+                End if                
+            Next
+        Else
+            oLogging.CreateEntry "Error: The source could not be found, " & source, LogTypeError
+            CreateRecoveryDrivers = False
+        End if
+    End Function
+	
+	
+    Function PrepareDisk(source, OSDiskLetter)
+        
+        Dim objVolumes, objVolume, objVolumeTemp, objDriverExport, objRecoveryDrive
+        Dim TempDiskLetter, sSizeRequired, iRecoveryPartition, iWindowsPartition
+        Dim objPartition, objPartitions
+		
+        oLogging.CreateEntry "Preparing Disk (" & source & ").", LogTypeInfo
+        
+        PrepareDisk = False
+		
+        If oFSO.FolderExists(source) OR source = "Recovery" Then
+
+            If NOT Rescan Then
+                oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+            End if
+            
+            ' Find partitions not to delete
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Letter = OSDiskLetter) Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.PartitionType = "Recovery" Then
+                                iRecoveryPartition = objPartition.Index
+                                oLogging.CreateEntry "Located Recovery partition (Partition " & iRecoveryPartition & ").", LogTypeInfo
+                                If source <> "Recovery" Then
+                                    If SelectPartition(objPartition.Index) Then
+                                        Set objVolumes = ListVolume
+                                        For Each objVolumeTemp in objVolumes.Items
+                                            If (objVolumeTemp.Selected) Then
+                                                If objVolumeTemp.Letter = "" Then
+                                                    TempDiskLetter = GetAvailableDriveLetter
+                                                    If Assign(TempDiskLetter) Then
+                                                        objVolumeTemp.Letter = TempDiskLetter
+                                                        oLogging.CreateEntry "Assigned driver letter (" & TempDiskLetter & ") to Recovery partition (Partition " & objPartition.Index & ")", LogTypeInfo
+                                                    Else
+                                                        oLogging.CreateEntry "Error assigning driver letter to Recovery partition (Partition " & objPartition.Index & ")", LogTypeError
+                                                        PrepareDisk = False
+                                                        Exit Function
+                                                    End if												
+                                                End if
+                                                Set objRecoveryDrive = oFSO.GetDrive(objVolumeTemp.Letter & ":")
+                                                Set objDriverExport = oFSO.GetFolder(source)
+                                                If (objRecoveryDrive.FreeSpace > objDriverExport.Size) Then
+                                                    If CopyDrivers(source, objVolumeTemp.Letter & ":\LMDriversTemp") Then
+                                                        oLogging.CreateEntry "Successfully copied exported drivers to a temporary folder on the Recovery partition.", LogTypeInfo
+                                                        PrepareDisk = True
+                                                    Else
+                                                        oLogging.CreateEntry "Error copying exported drivers to a temporary folder on the Recovery partition.", LogTypeError
+                                                        PrepareDisk = False
+                                                        Exit Function
+                                                    End if
+                                                Else
+                                                    oLogging.CreateEntry "Error:Not enough free space on the Recovery partition.", LogTypeWarning
+                                                    PrepareDisk = False
+                                                    Exit Function
+                                                End if
+                                            End if
+                                        Next
+                                    Else
+                                        oLogging.CreateEntry "Error selecting the Recovery partition (Partition " & objPartition.Index & ")", LogTypeError
+                                        PrepareDisk = False
+                                        Exit Function
+                                    End if
+                                Else
+                                    PrepareDisk = True
+                                End if
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting Windows volume (Volume " & objPartition.Index & ")", LogTypeError
+                        PrepareDisk = False
+                        Exit Function
+                    End if
+                End if
+            Next
+			
+            'Find Log partition
+            Set objVolumes = ListVolume
+            For Each objVolume in objVolumes.Items
+                If (objVolume.Letter = OSDiskLetter) Then
+                    If SelectVolume(objVolume.Index) Then
+                        Set objPartitions = ListPartition
+                        For Each objPartition in objPartitions.Items
+                            If objPartition.Selected Then
+                                iWindowsPartition = objPartition.Index
+                                oLogging.CreateEntry "Located Windows partition (" & iWindowsPartition & ").", LogTypeInfo
+                            End if
+                        Next
+                    Else
+                        oLogging.CreateEntry "Error selecting Windows volume (Volume " & objPartition.Index & ")", LogTypeError
+                        CreateRecoveryDrivers = False
+                        Exit Function
+                    End if
+                End if
+            Next
+            
+            'Delete all other partitions
+            If SelectDisk(0) Then
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                For Each objPartition in objPartitions.Items
+                    If objPartition.Index <> iRecoveryPartition Then
+                        If SelectPartition(objPartition.Index) Then
+                            If objPartition.Index = iWindowsPartition Then
+                                ' Make sure we don't cache the local root path
+                                oUtility.CacheLocalRootPath = False
+                                oLogging.CreateEntry "Moving the logs, then deleting the Windows partition.", LogTypeInfo
+                                oShell.Run "xcopy " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS\*" & Chr(34) & " /D /s /e /h /y /c", 0, true
+                            End if
+                            If DeletePartition Then
+                                oLogging.CreateEntry "Successfully deleted partition (Partition " & objPartition.Index & ")", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error deleting partition (Partition " & objPartition.Index & ")", LogTypeError
+                                CreateRecoveryDrivers = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error selecting partition (Partition " & objPartition.Index & ")", LogTypeError
+                            CreateRecoveryDrivers = False
+                            Exit Function
+                        End if
+                    End if
+                Next
+            Else
+                oLogging.CreateEntry "Error selecting disk (Disk 0)", LogTypeError
+                CreateRecoveryDrivers = False
+                Exit Function
+            End if
+        Else
+            oLogging.CreateEntry "Error, source not found: " & source, LogTypeError
+            CreateRecoveryDrivers = False
+            Exit Function
+        End If
+    End Function
+	
+    Function CopyDrivers(source, destination)
+        On Error Resume Next
+            If oFSO.FolderExists(source) Then
+                oFSO.CopyFolder source, destination
+                If Err.Number <> 0 Then
+                    oLogging.CreateEntry "Error (" & Err.Number & "): " & Err.Description, LogTypeError
+                    Err.Clear
+                    CopyDrivers = False
+                Else
+                    oLogging.CreateEntry "Successfully copied drivers to " & destination, LogTypeInfo
+                    CopyDrivers = True
+                End if
+            Else
+                oLogging.CreateEntry "Error (CopyDrivers): Unable to locate driver source folder, " & source, LogTypeError
+                CopyDrivers = False
+            End if
+        On Error Goto 0
+    End Function
+    
+    Function FormatDisk(boolBareMetal)
+	
+        ' // Expected disk state is a disk with only a Recovery partition.
+        ' // The required Windows, System and MSR (UEFI only) partitions will be created.
+        
+        Dim objVolumes, objVolume
+        Dim objDisks, objDisk
+        Dim objPartitions, objPartition
+        Dim iLMDriversPartition, iTMPDriversPartition, iOSPartition, iRetVal, arrDictKeys, currentLogPath
+        
+        FormatDisk = False
+        
+        If NOT Rescan Then
+            oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+        End if
+        
+        If oEnvironment.Item("IsUEFI") = "True" Then
+        
+            ' // *********************
+            ' // Format GPT/UEFI disk
+            ' // *********************
+            
+            oLogging.CreateEntry "Formating disk for GPT/UEFI configuration", LogTypeInfo
+            
+            ' // Rebuilding partitions    
+            If SelectDisk(0) Then
+                
+                Set objDisks = ListDisk
+                For Each objDisk in objDisks.Items
+                    If objDisk.Selected Then
+                    
+                        ' // Clean and convert disk if bare metal deployment
+                        If boolBareMetal Then
+                            ' Make sure we don't cache the local root path
+                            oUtility.CacheLocalRootPath = False
+                            oLogging.CreateEntry "Moving the logs, then cleaning the disks. Logging from the Clean operation might not carry over.", LogTypeInfo
+                            oShell.Run "xcopy " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS\*" & Chr(34) & " /D /s /e /h /y /c", 0, true
+                            If Clean Then
+                                If Convert("GPT") Then
+                                    oLogging.CreateEntry "Successfully converted the disk to GPT format. Count: " & count, LogTypeInfo
+                                Else
+                                    oLogging.CreateEntry "Unexpected Error: Unable to convert the disk to GPT format.", LogTypeError
+                                    FormatDisk = False
+                                    Exit Function
+                                End if
+                            Else
+                                oLogging.CreateEntry "Unexpected Error: Cleaning the disk.", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            If NOT objDisk.GPT Then
+                                oLogging.CreateEntry "Unexpected Error: The disk is not GPT format.", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        End if
+                        
+                    End if
+                Next
+                
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                
+                ' // Create System (EFI) partition
+                If CreatePart("efi size=499") Then
+                    If Format("quick fs=fat32 label=" & Chr(34) & "System" & Chr(34)) Then
+                        If Assign("S") Then
+                            oLogging.CreateEntry "Successfully created the System partition.", LogTypeInfo
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (System)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partition (System)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partition (System)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create MSR partition
+                If CreatePart("msr size=128") Then
+                    oLogging.CreateEntry "Successfully created the MSR partition.", LogTypeInfo                     
+                Else
+                    oLogging.CreateEntry "Error creating partition (MSR)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create Windows partition
+                If CreatePart("primary") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "Windows" & Chr(34)) Then
+                        If Assign("C") Then
+                            oLogging.CreateEntry "THIS IS JUST THE SIMPLEST WAY TO CREATE LOG DIRECTORIES ON C:", LogTypeInfo
+                            oShell.Run "xcopy " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS" & Chr(34) & " " & Chr(34) & oEnvironment.Item("LogPath") & "\*" & Chr(34) & " /s /e /h /y /c", 0, true
+                            FormatDisk = True
+                            oEnvironment.Item("OSDisk") = "C:"
+                            oLogging.CreateEntry "Successfully created the Windows partition.", LogTypeInfo
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (Windows)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                            oLogging.CreateEntry "Error formating partition (Windows)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partition (Windows)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+            Else
+                oLogging.CreateEntry "Error selecting disk (Disk 0)", LogTypeError
+                FormatDisk = False
+            End if
+            
+            If boolBareMetal Then
+            ' // Create Recovery partition
+                If Shrink(5000) Then
+                    If CreatePart("primary") Then
+                        If Format("quick fs=ntfs label=" & Chr(34) & "Recovery" & Chr(34)) Then
+                            If SetID("de94bba4-06d1-4d40-a16a-bfd50179d6ac") Then
+                                If GPTAttributes("0x8000000000000001") Then
+                                    oLogging.CreateEntry "Successfully created the Recovery partition.", LogTypeInfo
+                                    FormatDisk = True
+                                Else
+                                    oLogging.CreateEntry "Error setting GPT attributes (Recovery)", LogTypeError
+                                    FormatDisk = False
+                                    Exit Function
+                                End if
+                            Else
+                                oLogging.CreateEntry "Error setting partition ID (Recovery)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error formating partition (Recovery)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error creating partition (Recovery)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error shrinking the OS partition to make room for a Recovery partition.", LogTypeError
+                    FormatDisk = False
+                End if
+            End if
+            
+        Else
+        
+            ' // *********************
+            ' // Format MBR/BIOS disk
+            ' // *********************
+            
+            oLogging.CreateEntry "Formating disk for MBR/BIOS configuration", LogTypeInfo
+            
+            If NOT Rescan Then
+                oLogging.CreateEntry "Unexpected error occured while attempting to rescan disk configuration", LogTypeWarning
+            End if
+            
+            ' // Rebuilding partitions    
+            If SelectDisk(0) Then
+            
+                Set objDisks = ListDisk
+                For Each objDisk in objDisks.Items
+                    If objDisk.Selected Then
+                    
+                        ' // Clean and convert disk if bare metal deployment
+                        If boolBareMetal Then
+                            ' Make sure we don't cache the local root path
+                            oUtility.CacheLocalRootPath = False
+                            oLogging.CreateEntry "Moving the logs, then cleaning the disks. Logging from the Clean operation might not carry over.", LogTypeInfo
+                            oShell.Run "xcopy " & Chr(34) & oEnvironment.Item("LogPath") & Chr(34) & " " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS\*" & Chr(34) & " /D /s /e /h /y /c", 0, true
+                            If Clean Then
+                                If Convert("MBR") Then
+                                    oLogging.CreateEntry "Successfully converted the disk to MBR format.", LogTypeInfo
+                                Else
+                                    oLogging.CreateEntry "Unexpected Error: Unable to convert the disk to MBR format.", LogTypeError
+                                    FormatDisk = False
+                                    Exit Function
+                                End if
+                            Else
+                                oLogging.CreateEntry "Unexpected Error: Cleaning the disk.", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            If objDisk.GPT Then
+                                oLogging.CreateEntry "Unexpected Error: The disk is not MBR format.", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        End if
+                        
+                    End if
+                Next
+                
+                Set objPartitions = ListPartition
+                oLogging.CreateEntry "Detected " & objPartitions.Count & " partitions on the disk (Disk 0)", LogTypeInfo
+                
+                ' // Create System partition
+                If CreatePart("primary size=499") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "System" & Chr(34)) Then
+                        If Assign("S") Then
+                            If SetActive Then
+                                oLogging.CreateEntry "Successfully created the System partition.", LogTypeInfo
+                            Else
+                                oLogging.CreateEntry "Error making the partition a boot partition (System)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if                           
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (System)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partition (System)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partition (System)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+                
+                ' // Create Windows partition
+                If CreatePart("primary") Then
+                    If Format("quick fs=ntfs label=" & Chr(34) & "Windows" & Chr(34)) Then
+                        If Assign("C") Then
+                            oLogging.CreateEntry "THIS IS JUST THE SIMPLEST WAY TO CREATE LOG DIRECTORIES ON C:", LogTypeInfo
+                            oShell.Run "xcopy " & Chr(34) & "X:\MININT\SMSOSD\OSDLOGS" & Chr(34) & " " & Chr(34) & oEnvironment.Item("LogPath") & "\*" & Chr(34) & " /s /e /h /y /c", 0, true
+                            FormatDisk = True
+                            oEnvironment.Item("OSDisk") = "C:"
+                            oLogging.CreateEntry "Successfully created the Windows partition.", LogTypeInfo                            
+                        Else
+                            oLogging.CreateEntry "Error assigning drive letter (Windows)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error formating partition (Windows)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error creating partition (Windows)", LogTypeError
+                    FormatDisk = False
+                    Exit Function
+                End if
+            Else
+                oLogging.CreateEntry "Error selecting disk (Disk 0)", LogTypeError
+                FormatDisk = False
+            End if
+        
+            If boolBareMetal Then
+            ' // Create Recovery partition
+                If Shrink(5000) Then
+                    If CreatePart("primary") Then
+                        If Format("quick fs=ntfs label=" & Chr(34) & "Recovery" & Chr(34)) Then
+                            If SetID("27") Then
+                                oLogging.CreateEntry "Successfully created the Recovery partition.", LogTypeInfo
+                                FormatDisk = True
+                            Else
+                                oLogging.CreateEntry "Error setting partition ID (Recovery)", LogTypeError
+                                FormatDisk = False
+                                Exit Function
+                            End if
+                        Else
+                            oLogging.CreateEntry "Error formating partition (Recovery)", LogTypeError
+                            FormatDisk = False
+                            Exit Function
+                        End if
+                    Else
+                        oLogging.CreateEntry "Error creating partition (Recovery)", LogTypeError
+                        FormatDisk = False
+                        Exit Function
+                    End if
+                Else
+                    oLogging.CreateEntry "Error shrinking the OS partition to make room for a Recovery partition.", LogTypeError
+                    FormatDisk = False
+                End if
+            End if
+        
+        End if
+
+    End Function
+
+    </script>
+</job>
